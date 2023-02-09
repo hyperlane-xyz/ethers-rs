@@ -36,12 +36,7 @@ use url::{ParseError, Url};
 use ethers_core::types::Chain;
 use futures_util::{lock::Mutex, try_join};
 use std::{
-    collections::VecDeque,
-    convert::TryFrom,
-    fmt::Debug,
-    str::FromStr,
-    sync::Arc,
-    time::Duration,
+    collections::VecDeque, convert::TryFrom, fmt::Debug, str::FromStr, sync::Arc, time::Duration,
 };
 use tracing::trace;
 use tracing_futures::Instrument;

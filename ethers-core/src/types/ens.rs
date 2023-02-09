@@ -1,15 +1,24 @@
 use crate::types::Address;
 use rlp::{Decodable, Encodable, RlpStream};
 use serde::{ser::Error as SerializationError, Deserialize, Deserializer, Serialize, Serializer};
-use std::{cmp::Ordering, convert::Infallible, str::FromStr};
+use std::{cmp::Ordering, convert::Infallible, fmt::Debug, str::FromStr};
 
 /// ENS name or Ethereum Address. Not RLP encoded/serialized if it's a name.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum NameOrAddress {
     /// An ENS Name (format does not get checked)
     Name(String),
     /// An Ethereum Address
     Address(Address),
+}
+
+impl Debug for NameOrAddress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NameOrAddress::Name(name) => write!(f, "{name}"),
+            NameOrAddress::Address(addr) => write!(f, "{addr:?}"),
+        }
+    }
 }
 
 // Only RLP encode the Address variant since it doesn't make sense to ever RLP encode
