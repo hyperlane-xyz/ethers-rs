@@ -15,7 +15,7 @@ pub enum NameOrAddress {
 impl Debug for NameOrAddress {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            NameOrAddress::Name(name) => write!(f, "{name}"),
+            NameOrAddress::Name(name) => write!(f, "\"{name}\""),
             NameOrAddress::Address(addr) => write!(f, "{addr:?}"),
         }
     }
