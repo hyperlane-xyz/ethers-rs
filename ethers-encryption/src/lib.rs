@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use rand::{rngs::OsRng, RngCore};
 use std::convert::TryInto;
 
-pub use derivation;
-pub use encryption;
+pub mod derivation;
+pub mod encryption;
 
 /// Salt for derivation of transaction encryption key
 pub const TX_KEY_PREFIX: &str = "IOEncryptionKeyV1";

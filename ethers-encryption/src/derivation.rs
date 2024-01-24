@@ -2,7 +2,7 @@ use deoxys::aead::{Aead, KeyInit, Payload};
 use sha2::Sha256;
 use hmac::{Hmac, Mac};
 
-use crate::encryption::KEY_SIZE;
+use crate::KEY_SIZE;
 
 type HmacSha256 = Hmac<Sha256>;
 

@@ -5,9 +5,9 @@ use deoxys::aead::generic_array::GenericArray;
 use deoxys::aead::{Aead, KeyInit, Payload};
 use deoxys::DeoxysII256;
 
-use crate::encryption::{KEY_SIZE, TX_KEY_PREFIX, NONCE_SIZE, TAG_SIZE };
+use crate::{KEY_SIZE, TX_KEY_PREFIX, NONCE_SIZE, TAG_SIZE };
 
-use crate::encryption::derivation::{
+use crate::derivation::{
     derive_shared_secret,
     derive_encryption_key,
     x25519_private_to_public

@@ -21,3 +21,7 @@ rand = "0.8.5"
 sha2 = "0.10.7"
 hmac = "0.12.1"
 x25519-dalek = { version = "2.0.0", features = ["static_secrets"] }
+hex = { version = "0.4.3", default-features = false, features = ["std"] }
+reqwest = { version = "0.11.13", default-features = false, features = ["json"] }
+serde = { version = "1.0.124", default-features = false, features = ["derive"] }
+serde_json = { version = "1.0.64", default-features = false, features = ["raw_value"] }
