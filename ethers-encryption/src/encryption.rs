@@ -8,12 +8,16 @@ use deoxys::DeoxysII256;
 use crate::encryption::{KEY_SIZE, TX_KEY_PREFIX, NONCE_SIZE, TAG_SIZE };
 
 use crate::encryption::derivation::{
-    derive_shared_secret, 
-    derive_encryption_key, 
+    derive_shared_secret,
+    derive_encryption_key,
     x25519_private_to_public
 };
 
-pub fn encrypt_ecdh(private_key: [u8; 32], node_public_key: [u8; 32], data: &[u8]) -> Result<Vec<u8>, deoxys::Error> {
+pub fn encrypt_ecdh(
+    private_key: [u8; KEY_SIZE],
+    node_public_key: [u8; KEY_SIZE],
+    data: &[u8],
+) -> Result<Vec<u8>, deoxys::Error> {
     let shared_secret = derive_shared_secret(private_key, node_public_key);
     let salt = TX_KEY_PREFIX.as_bytes();
     let encryption_key = derive_encryption_key(shared_secret.as_bytes(), salt);
@@ -28,14 +32,21 @@ pub fn encrypt_ecdh(private_key: [u8; 32], node_public_key: [u8; 32], data: &[u8
     Ok(result)
 }
 
-pub fn decrypt_ecdh(private_key: [u8; 32], node_public_key: [u8; 32], encrypted_data: &[u8]) -> Result<Vec<u8>, deoxys::Error> {
+pub fn decrypt_ecdh(
+    private_key: [u8; KEY_SIZE],
+    node_public_key: [u8; KEY_SIZE],
+    encrypted_data: &[u8],
+) -> Result<Vec<u8>, deoxys::Error> {
     let shared_secret = derive_shared_secret(private_key, node_public_key);
     let salt = TX_KEY_PREFIX.as_bytes();
     let encryption_key = derive_encryption_key(shared_secret.as_bytes(), salt);
     deoxys_decrypt(&encryption_key, encrypted_data)
 }
 
-pub fn deoxys_encrypt(private_key: &[u8; KEY_SIZE], data: &[u8]) -> Result<Vec<u8>, deoxys::Error> {
+pub fn deoxys_encrypt(
+    private_key: &[u8; KEY_SIZE],
+    data: &[u8],
+) -> Result<Vec<u8>, deoxys::Error> {
     let mut rng = OsRng;
     let mut aad = [0u8; TAG_SIZE];
     rng.fill_bytes(&mut aad);
@@ -57,14 +68,14 @@ pub fn deoxys_encrypt(private_key: &[u8; KEY_SIZE], data: &[u8]) -> Result<Vec<u
     }
 }
 
-pub fn deoxys_decrypt(private_key: &[u8; KEY_SIZE], encrypted_data: &[u8]) -> Result<Vec<u8>, deoxys::Error> {
+pub fn deoxys_decrypt(
+    private_key: &[u8; KEY_SIZE],
+    encrypted_data: &[u8],
+) -> Result<Vec<u8>, deoxys::Error> {
     let nonce = &encrypted_data[0..NONCE_SIZE];
     let aad = &encrypted_data[NONCE_SIZE..NONCE_SIZE+TAG_SIZE];
     let ciphertext = &encrypted_data[NONCE_SIZE+TAG_SIZE..];
-    let payload = Payload {
-        msg: ciphertext,
-        aad: aad,
-    };
+    let payload = Payload { msg: ciphertext, aad };
     let key = GenericArray::from_slice(private_key);
     DeoxysII256::new(key).decrypt( GenericArray::from_slice(nonce), payload)
 }

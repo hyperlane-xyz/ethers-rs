@@ -4,13 +4,18 @@ use serde::{Deserialize, Serialize};
 use rand::{rngs::OsRng, RngCore};
 use std::convert::TryInto;
 
-pub mod derivation;
-pub mod encryption;
+pub use derivation;
+pub use encryption;
 
+/// Salt for derivation of transaction encryption key
 pub const TX_KEY_PREFIX: &str = "IOEncryptionKeyV1";
+/// Salt for derivation of user key material
 pub const USER_KEY_PREFIX: &str = "UserEncryptionKeyV1";
+/// Size of `tag` for DEOXYS-II encryption
 pub const TAG_SIZE: usize = 16;
+/// Size of `nonce` for DEOXYS-II encryption
 pub const NONCE_SIZE: usize = 15;
+/// Default size of private / public key
 pub const KEY_SIZE: usize = 32;
 
 #[derive(Debug, Deserialize)]
@@ -18,10 +23,17 @@ struct NodePublicKeyResponse {
     result: String,
 }
 
+/// Encrypts provided transaction or call data field
+///
+/// * node_url - URL of JSON-RPC to obtain node public key
+/// * data – raw data to encrypt
+///
+/// Returns Some(encrypted_data, used_key) if encryption was successful, returns None in case
+/// of error
 pub async fn encrypt_data(
     node_url: &str,
     data: &[u8],
-) -> Option<(Vec<u8>, [u8; 32])> {
+) -> Option<(Vec<u8>, [u8; KEY_SIZE])> {
     // Get node public key
     let node_public_key = match get_node_public_key(node_url).await {
         Some(pk) => pk,
@@ -57,7 +69,14 @@ pub async fn encrypt_data(
     }
 }
 
-pub async fn decrypt_data(node_url: &str, encryption_key: [u8; 32], data: &[u8]) -> Option<Vec<u8>> {
+/// Decrypts provided ciphertext, received as a node response
+///
+/// * node_url – URL of JSON-RPC to obtain node public key
+/// * encryption_key – key, used during encryption of raw data
+/// * data – ciphertext, received from node
+///
+/// Returns Some(decrypted_data) in case of success, otherwise returns None
+pub async fn decrypt_data(node_url: &str, encryption_key: [u8; KEY_SIZE], data: &[u8]) -> Option<Vec<u8>> {
     let node_public_key = match get_node_public_key(node_url).await {
         Some(pk) => pk,
         None => {
@@ -81,7 +100,13 @@ pub async fn decrypt_data(node_url: &str, encryption_key: [u8; 32], data: &[u8])
     }
 }
 
-pub async fn get_node_public_key(url: &str) -> Option<[u8; 32]> {
+/// Requests node public key, which will be used for derivation of shared
+/// encryption key
+///
+/// * url – URL of JSON-RPC to obtain node public key
+///
+/// Returns Some(node_public_key) in case of success, otherwise returns None
+pub async fn get_node_public_key(url: &str) -> Option<[u8; KEY_SIZE]> {
     let url = match Url::parse(url) {
         Ok(url) => url,
         Err(err) => {
@@ -119,9 +144,9 @@ pub async fn get_node_public_key(url: &str) -> Option<[u8; 32]> {
     Some(convert_to_fixed_size_array(res))
 }
 
-fn convert_to_fixed_size_array(data: Vec<u8>) -> [u8; 32] {
-    let mut fixed_array = [0u8; 32];
-    fixed_array.copy_from_slice(&data[..32]);
+fn convert_to_fixed_size_array(data: Vec<u8>) -> [u8; KEY_SIZE] {
+    let mut fixed_array = [0u8; KEY_SIZE];
+    fixed_array.copy_from_slice(&data[..KEY_SIZE]);
     fixed_array
 }
 

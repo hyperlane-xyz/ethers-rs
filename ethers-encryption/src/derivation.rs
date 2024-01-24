@@ -2,12 +2,12 @@ use deoxys::aead::{Aead, KeyInit, Payload};
 use sha2::Sha256;
 use hmac::{Hmac, Mac};
 
-use crate::encryption::{KEY_SIZE};
+use crate::encryption::KEY_SIZE;
 
 type HmacSha256 = Hmac<Sha256>;
 
 /// Converts provided x25519 private key to public key
-pub fn x25519_private_to_public(private_key: [u8; KEY_SIZE]) -> [u8; 32] {
+pub fn x25519_private_to_public(private_key: [u8; KEY_SIZE]) -> [u8; KEY_SIZE] {
     let secret = x25519_dalek::StaticSecret::from(private_key);
     let public_key = x25519_dalek::PublicKey::from(&secret);
     public_key.to_bytes()
