@@ -187,6 +187,10 @@ impl JsonRpcClient for Ws {
         // parse it
         Ok(serde_json::from_str(res.get())?)
     }
+
+    fn connection(&self) -> String {
+        "127.0.0.1:8545".to_string()
+    }
 }
 
 impl PubsubClient for Ws {

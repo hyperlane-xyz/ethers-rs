@@ -56,6 +56,10 @@ impl JsonRpcClient for MockProvider {
 
         Ok(res)
     }
+
+    fn connection(&self) -> String {
+        "http://127.0.0.1:8545".to_string()
+    }
 }
 
 impl MockProvider {

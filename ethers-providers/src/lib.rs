@@ -69,6 +69,9 @@ pub trait JsonRpcClient: Debug + Send + Sync {
     where
         T: Debug + Serialize + Send + Sync,
         R: DeserializeOwned;
+
+    /// Returns URL of connected node
+    fn connection(&self) -> String;
 }
 
 use ethers_core::types::*;

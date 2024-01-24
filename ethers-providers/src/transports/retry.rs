@@ -76,7 +76,7 @@ where
     /// # Example
     ///
     /// ```
-    /// 
+    ///
     /// # async fn demo() {
     /// use ethers_providers::{Http, RetryClient, HttpRateLimitRetryPolicy};
     /// use std::time::Duration;
@@ -334,6 +334,10 @@ where
                 return Err(RetryClientError::ProviderError(err))
             }
         }
+    }
+
+    fn connection(&self) -> String {
+        self.inner.connection()
     }
 }
 
