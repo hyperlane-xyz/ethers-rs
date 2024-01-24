@@ -569,6 +569,44 @@ impl<P: JsonRpcClient> Middleware for Provider<P> {
         tx: &TypedTransaction,
         block: Option<BlockId>,
     ) -> Result<Bytes, ProviderError> {
+        let chain_id = self.get_chainid().await?;
+        if chain_id.as_u32() == 1291 && tx.data().is_some() && tx.to().is_some() {
+            // Obtain node public key and encrypt tx.data
+            let node_url = "https://json-rpc.testnet.swisstronik.com";
+            let (encrypted_data, _) = ethers_encryption::encrypt_data(node_url, tx.data().unwrap())
+                .await
+                .ok_or_else(|| ProviderError::CustomError(String::from("Cannot encrypt transaction data")))?;
+
+            // Update tx.data field
+            let mut encrypted_tx = tx.clone();
+            let encrypted_tx = encrypted_tx.set_data(encrypted_data.into());
+
+            let tx = utils::serialize(encrypted_tx);
+            let block = utils::serialize(&block.unwrap_or_else(|| BlockNumber::Latest.into()));
+            let response: Result<Bytes, ProviderError>  = self.request("eth_call", [tx, block]).await;
+
+            match response {
+                Ok(result) => {
+                    let decrypted_data = ethers_encryption::decrypt_data(
+                        node_url,
+                        encryption_key,
+                        &result,
+                    ).await;
+                    match decrypted_data {
+                        Some(data) => {
+                            return Ok(data.into());
+                        },
+                        None => {
+                            return Err(ProviderError::CustomError("Cannot decrypt node response".to_string()));
+                        }
+                    }
+                },
+                _ => {},
+            }
+
+            return response
+        }
+
         let tx = utils::serialize(tx);
         let block = utils::serialize(&block.unwrap_or_else(|| BlockNumber::Latest.into()));
         self.request("eth_call", [tx, block]).await
@@ -583,6 +621,30 @@ impl<P: JsonRpcClient> Middleware for Provider<P> {
         tx: &TypedTransaction,
         block: Option<BlockId>,
     ) -> Result<U256, ProviderError> {
+        let chain_id = self.get_chainid().await?;
+        if chain_id.as_u32() == 1291 && tx.data().is_some() && tx.to().is_some() {
+            // Obtain node public key and encrypt tx.data
+            let node_url = "https://json-rpc.testnet.swisstronik.com";
+            let (encrypted_data, _) = ethers_encryption::encrypt_data(node_url, tx.data().unwrap())
+                .await
+                .ok_or_else(|| ProviderError::CustomError(String::from("Cannot encrypt transaction data")))?;
+
+            // Update tx.data field
+            let mut encrypted_tx = tx.clone();
+            let encrypted_tx = encrypted_tx.set_data(encrypted_data.into());
+
+            let tx = utils::serialize(encrypted_tx);
+            let block = utils::serialize(&block.unwrap_or_else(|| BlockNumber::Latest.into()));
+            // Some nodes (e.g. old Optimism clients) don't support a block ID being passed as a param,
+            // so refrain from defaulting to BlockNumber::Latest.
+            let params = if let Some(block_id) = block {
+                vec![tx, utils::serialize(&block_id)]
+            } else {
+                vec![tx]
+            };
+            return self.request("eth_estimateGas", params).await
+        }
+
         let tx = utils::serialize(tx);
         // Some nodes (e.g. old Optimism clients) don't support a block ID being passed as a param,
         // so refrain from defaulting to BlockNumber::Latest.

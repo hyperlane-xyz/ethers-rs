@@ -1472,6 +1472,7 @@ dependencies = [
  "base64 0.13.1",
  "bytes",
  "ethers-core",
+ "ethers-encryption",
  "futures-channel",
  "futures-core",
  "futures-timer",
