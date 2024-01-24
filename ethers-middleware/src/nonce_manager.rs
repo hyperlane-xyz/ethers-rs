@@ -1,11 +1,16 @@
 use async_trait::async_trait;
 use ethers_core::types::{transaction::eip2718::TypedTransaction, *};
-use ethers_providers::{FromErr, Middleware, PendingTransaction};
+use ethers_providers::{EscalatingPending, EscalationPolicy, FilterKind, FilterWatcher, FromErr, LogQuery, Middleware, PendingTransaction, Provider, ProviderError, PubsubClient, SubscriptionStream};
 use std::{
     fmt::Debug,
     sync::atomic::{AtomicBool, AtomicU64, Ordering},
 };
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use thiserror::Error;
+use url::Url;
+use ethers_core::types::transaction::eip2930::AccessListWithGasUsed;
+use ethers_providers::erc::ERCNFT;
 
 #[derive(Debug)]
 /// Middleware used for calculating nonces locally, useful for signing multiple
@@ -96,6 +101,10 @@ where
 
     fn inner(&self) -> &M {
         &self.inner
+    }
+
+    fn connection(&self) -> String {
+        self.inner.connection()
     }
 
     async fn fill_transaction(

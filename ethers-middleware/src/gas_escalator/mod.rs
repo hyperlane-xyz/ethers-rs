@@ -6,15 +6,21 @@ mod linear;
 pub use linear::LinearGasPrice;
 
 use async_trait::async_trait;
-use ethers_core::types::{BlockId, TransactionRequest, TxHash, U256};
-use ethers_providers::{interval, FromErr, Middleware, PendingTransaction, StreamExt};
+use ethers_core::types::{Address, Block, BlockId, BlockNumber, BlockTrace, Bytes, EIP1186ProofResponse, FeeHistory, Filter, GethDebugTracingOptions, GethTrace, Log, NameOrAddress, Signature, SyncingStatus, Trace, TraceFilter, TraceType, Transaction, TransactionReceipt, TransactionRequest, TxHash, TxpoolContent, TxpoolInspect, TxpoolStatus, U256, U64};
+use ethers_providers::{interval, FromErr, Middleware, PendingTransaction, StreamExt, Provider, EscalationPolicy, EscalatingPending, LogQuery, FilterKind, FilterWatcher, ProviderError, SubscriptionStream, PubsubClient};
 use futures_util::lock::Mutex;
 use instant::Instant;
 use std::{pin::Pin, sync::Arc};
+use std::fmt::Debug;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use thiserror::Error;
 
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::spawn;
+use url::Url;
+use ethers_core::types::transaction::eip2930::AccessListWithGasUsed;
+use ethers_providers::erc::ERCNFT;
 
 #[cfg(target_arch = "wasm32")]
 type WatcherFuture<'a> = Pin<Box<dyn futures_util::stream::Stream<Item = ()> + 'a>>;
@@ -96,6 +102,10 @@ where
 
     fn inner(&self) -> &M {
         &self.inner
+    }
+
+    fn connection(&self) -> String {
+        self.inner.connection()
     }
 
     async fn send_transaction<T: Into<TypedTransaction> + Send + Sync>(

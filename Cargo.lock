@@ -1442,6 +1442,7 @@ dependencies = [
  "auto_impl 0.5.0",
  "ethers-contract",
  "ethers-core",
+ "ethers-encryption",
  "ethers-etherscan",
  "ethers-providers",
  "ethers-signers",

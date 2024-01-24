@@ -163,6 +163,8 @@ pub trait Middleware: Sync + Send + Debug {
         self.inner().provider()
     }
 
+    fn connection(&self) -> String;
+
     fn default_sender(&self) -> Option<Address> {
         self.inner().default_sender()
     }

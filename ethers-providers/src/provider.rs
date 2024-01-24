@@ -1,11 +1,4 @@
-use crate::{
-    call_raw::CallBuilder,
-    ens, erc, maybe,
-    pubsub::{PubsubClient, SubscriptionStream},
-    stream::{FilterWatcher, DEFAULT_LOCAL_POLL_INTERVAL, DEFAULT_POLL_INTERVAL},
-    FromErr, Http as HttpProvider, JsonRpcClient, JsonRpcClientWrapper, LogQuery, MockProvider,
-    PendingTransaction, QuorumProvider, RwClient, SyncingStatus,
-};
+use crate::{call_raw::CallBuilder, ens, erc, maybe, pubsub::{PubsubClient, SubscriptionStream}, stream::{FilterWatcher, DEFAULT_LOCAL_POLL_INTERVAL, DEFAULT_POLL_INTERVAL}, FromErr, Http as HttpProvider, JsonRpcClient, JsonRpcClientWrapper, LogQuery, MockProvider, PendingTransaction, QuorumProvider, RwClient, SyncingStatus, EscalationPolicy, EscalatingPending};
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "ws"))]
 use crate::transports::Authorization;
@@ -316,6 +309,10 @@ impl<P: JsonRpcClient> Middleware for Provider<P> {
 
     fn default_sender(&self) -> Option<Address> {
         self.from
+    }
+
+    fn connection(&self) -> String {
+        self.inner.connection()
     }
 
     ////// Blockchain Status

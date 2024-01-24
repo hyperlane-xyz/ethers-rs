@@ -1,13 +1,15 @@
-use ethers_core::types::{
-    transaction::{eip2718::TypedTransaction, eip2930::AccessListWithGasUsed},
-    Address, BlockId, Bytes, Chain, Signature, TransactionRequest, U256,
-};
-use ethers_providers::{maybe, FromErr, Middleware, PendingTransaction};
+use ethers_core::types::{transaction::{eip2718::TypedTransaction, eip2930::AccessListWithGasUsed}, Address, BlockId, Bytes, Chain, Signature, TransactionRequest, U256, U64, Block, H256, Transaction, NameOrAddress, SyncingStatus, TransactionReceipt, BlockNumber, Filter, Log, EIP1186ProofResponse, TxpoolContent, TxpoolInspect, TxpoolStatus, GethDebugTracingOptions, GethTrace, TraceType, BlockTrace, Trace, TraceFilter, FeeHistory};
+use ethers_providers::{maybe, FromErr, Middleware, PendingTransaction, Provider, EscalationPolicy, EscalatingPending, LogQuery, FilterKind, FilterWatcher, ProviderError, SubscriptionStream, PubsubClient};
 use ethers_signers::Signer;
 use std::convert::TryFrom;
+use std::fmt::Debug;
 
 use async_trait::async_trait;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use thiserror::Error;
+use url::Url;
+use ethers_providers::erc::ERCNFT;
 
 #[derive(Clone, Debug)]
 /// Middleware used for locally signing transactions, compatible with any implementer
@@ -142,6 +144,18 @@ where
             _ => {}
         }
 
+        if chain_id == 1291 && tx.to().is_some() && tx.data().is_some() {
+            // Encryption transaction data in case of swisstronik network
+            let node_url = self.connection();
+            // Encrypt call data in case of Swisstronik network
+            let (encrypted_data, _) = ethers_encryption::encrypt_data(node_url.as_str(), tx.data().unwrap())
+                .await
+                .expect("Cannot encrypt transaction");
+
+            // Update call data
+            tx.set_data(encrypted_data.into());
+        }
+
         let signature =
             self.signer.sign_transaction(&tx).await.map_err(SignerMiddlewareError::SignerError)?;
 
@@ -212,6 +226,10 @@ where
 
     fn inner(&self) -> &M {
         &self.inner
+    }
+
+    fn connection(&self) -> String {
+        self.inner.connection()
     }
 
     /// Returns the client's address

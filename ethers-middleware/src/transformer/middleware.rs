@@ -1,8 +1,14 @@
+use std::fmt::Debug;
 use super::{Transformer, TransformerError};
 use async_trait::async_trait;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use ethers_core::types::{transaction::eip2718::TypedTransaction, *};
-use ethers_providers::{FromErr, Middleware, PendingTransaction};
+use ethers_providers::{EscalatingPending, EscalationPolicy, FilterKind, FilterWatcher, FromErr, LogQuery, Middleware, PendingTransaction, Provider, ProviderError, PubsubClient, SubscriptionStream};
 use thiserror::Error;
+use url::Url;
+use ethers_core::types::transaction::eip2930::AccessListWithGasUsed;
+use ethers_providers::erc::ERCNFT;
 
 #[derive(Debug)]
 /// Middleware used for intercepting transaction requests and transforming them to be executed by
@@ -52,6 +58,10 @@ where
 
     fn inner(&self) -> &M {
         &self.inner
+    }
+
+    fn connection(&self) -> String {
+        self.inner.connection()
     }
 
     async fn send_transaction<Tx: Into<TypedTransaction> + Send + Sync>(

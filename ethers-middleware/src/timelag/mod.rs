@@ -1,12 +1,13 @@
 use async_trait::async_trait;
-use ethers_core::types::{
-    transaction::eip2718::TypedTransaction, Block, BlockId, BlockNumber, Bytes, FilterBlockOption,
-    NameOrAddress, Transaction, TransactionReceipt, TxHash, U256,
-};
+use ethers_core::types::{transaction::eip2718::TypedTransaction, Block, BlockId, BlockNumber, Bytes, FilterBlockOption, NameOrAddress, Transaction, TransactionReceipt, TxHash, U256, Address, SyncingStatus, Signature, Filter, Log, EIP1186ProofResponse, TxpoolContent, TxpoolInspect, TxpoolStatus, GethDebugTracingOptions, GethTrace, TraceType, BlockTrace, Trace, TraceFilter, U64, FeeHistory};
 use std::sync::Arc;
+use serde::Serialize;
 use thiserror::Error;
+use url::Url;
+use ethers_core::types::transaction::eip2930::AccessListWithGasUsed;
 
-use ethers_providers::{FromErr, Middleware};
+use ethers_providers::{EscalatingPending, EscalationPolicy, FilterWatcher, FromErr, LogQuery, Middleware, PendingTransaction, Provider, ProviderError};
+use ethers_providers::erc::ERCNFT;
 
 type TimeLagResult<T, M> = Result<T, TimeLagError<M>>;
 
@@ -108,6 +109,10 @@ where
 
     fn inner(&self) -> &Self::Inner {
         &self.inner
+    }
+
+    fn connection(&self) -> String {
+        self.inner.connection()
     }
 
     async fn get_block_number(&self) -> Result<ethers_core::types::U64, Self::Error> {
