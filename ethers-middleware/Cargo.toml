@@ -20,7 +20,7 @@ ethers-core = { version = "^1.0.0", path = "../ethers-core", default-features = 
 ethers-etherscan = { version = "^1.0.0", path = "../ethers-etherscan", default-features = false }
 ethers-providers = { version = "^1.0.0", path = "../ethers-providers", default-features = false }
 ethers-signers = { version = "^1.0.0", path = "../ethers-signers", default-features = false }
-ethers-encryption = { version = "^1.0.0", path = "../ethers-encryption", default-features = false }
+ethers-encryption = { version = "^1.0.0", path = "../ethers-encryption", default-features = false , optional = true}
 
 async-trait = { version = "0.1.50", default-features = false }
 auto_impl = { version = "0.5.0", default-features = false }
@@ -57,4 +57,4 @@ tokio = { version = "1.18", default-features = false, features = ["rt", "macros"
 
 [features]
 celo = ["ethers-core/celo", "ethers-providers/celo", "ethers-signers/celo", "ethers-contract/celo"]
-swisstronik = ["ethers-providers/swisstronik"]
+swisstronik = ["ethers-providers/swisstronik", "ethers-encryption"]
