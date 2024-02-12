@@ -106,10 +106,6 @@ impl JsonRpcClient for Provider {
 
         Ok(res)
     }
-
-    fn connection(&self) -> String {
-        self.url.to_string()
-    }
 }
 
 impl Provider {

@@ -69,9 +69,6 @@ pub trait JsonRpcClient: Debug + Send + Sync {
     where
         T: Debug + Serialize + Send + Sync,
         R: DeserializeOwned;
-
-    /// Returns URL of connected node
-    fn connection(&self) -> String;
 }
 
 use ethers_core::types::*;
@@ -162,8 +159,6 @@ pub trait Middleware: Sync + Send + Debug {
     fn provider(&self) -> &Provider<Self::Provider> {
         self.inner().provider()
     }
-
-    fn connection(&self) -> String;
 
     fn default_sender(&self) -> Option<Address> {
         self.inner().default_sender()
@@ -677,6 +672,17 @@ pub trait CeloMiddleware: Middleware {
         block_id: T,
     ) -> Result<Vec<String>, ProviderError> {
         self.provider().get_validators_bls_public_keys(block_id).await.map_err(FromErr::from)
+    }
+}
+
+#[cfg(feature = "swisstronik")]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+pub trait SwisstronikMiddleware: Middleware {
+    async fn get_node_public_key(
+        &self
+    ) -> Result<String, ProviderError> {
+        self.provider().get_node_public_key().await.map_err(FromErr::from)
     }
 }
 

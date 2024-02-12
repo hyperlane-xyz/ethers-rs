@@ -124,8 +124,4 @@ where
             _ => self.r.request(method, params).await.map_err(RwClientError::Read),
         }
     }
-
-    fn connection(&self) -> String {
-        self.r.connection()
-    }
 }

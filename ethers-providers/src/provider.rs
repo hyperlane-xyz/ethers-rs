@@ -7,6 +7,8 @@ use crate::transports::{HttpRateLimitRetryPolicy, RetryClient};
 
 #[cfg(feature = "celo")]
 use crate::CeloMiddleware;
+#[cfg(feature = "swisstronik")]
+use crate::SwisstronikMiddleware;
 use crate::Middleware;
 use async_trait::async_trait;
 
@@ -100,6 +102,15 @@ impl<P> AsRef<P> for Provider<P> {
 impl FromErr<ProviderError> for ProviderError {
     fn from(src: ProviderError) -> Self {
         src
+    }
+}
+
+pub trait GetConn{
+    fn get_conn(&self) -> String;
+}
+impl GetConn for Provider<Http> {
+    fn get_conn(&self) -> String {
+        self.inner.url().to_string()
     }
 }
 
@@ -292,6 +303,18 @@ impl<P: JsonRpcClient> CeloMiddleware for Provider<P> {
     }
 }
 
+
+#[cfg(feature = "swisstronik")]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl<P: JsonRpcClient> SwisstronikMiddleware for Provider<P> {
+    async fn get_node_public_key(
+        &self
+    ) -> Result<String, ProviderError> {
+        self.request("swtr_getNodePublicKey", []).await
+    }
+}
+
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl<P: JsonRpcClient> Middleware for Provider<P> {
@@ -309,10 +332,6 @@ impl<P: JsonRpcClient> Middleware for Provider<P> {
 
     fn default_sender(&self) -> Option<Address> {
         self.from
-    }
-
-    fn connection(&self) -> String {
-        self.inner.connection()
     }
 
     ////// Blockchain Status
@@ -569,7 +588,7 @@ impl<P: JsonRpcClient> Middleware for Provider<P> {
         let chain_id = self.get_chainid().await?;
         if chain_id.as_u32() == 1291 && tx.data().is_some() && tx.to().is_some() {
             // Obtain node public key and encrypt tx.data
-            let node_url = self.inner.connection();
+            let node_url = self.get_conn();
 
             let (encrypted_data, encryption_key) = ethers_encryption::encrypt_data(
                 node_url.as_str(),
@@ -621,9 +640,10 @@ impl<P: JsonRpcClient> Middleware for Provider<P> {
         block: Option<BlockId>,
     ) -> Result<U256, ProviderError> {
         let chain_id = self.get_chainid().await?;
+
         if chain_id.as_u32() == 1291 && tx.data().is_some() && tx.to().is_some() {
             // Obtain node public key and encrypt tx.data
-            let node_url = self.inner.connection();
+            let node_url = "";
             let (encrypted_data, _) = ethers_encryption::encrypt_data(node_url.as_str(), tx.data().unwrap())
                 .await
                 .ok_or_else(|| ProviderError::CustomError(String::from("Cannot encrypt transaction data")))?;

@@ -1,14 +1,8 @@
-use std::fmt::Debug;
 use super::{GasOracle, GasOracleError};
 use async_trait::async_trait;
-use serde::de::DeserializeOwned;
-use serde::Serialize;
 use ethers_core::types::{transaction::eip2718::TypedTransaction, *};
-use ethers_providers::{EscalatingPending, EscalationPolicy, FilterKind, FilterWatcher, FromErr, LogQuery, Middleware, PendingTransaction, Provider, ProviderError, PubsubClient, SubscriptionStream};
+use ethers_providers::{FromErr, Middleware, PendingTransaction};
 use thiserror::Error;
-use url::Url;
-use ethers_core::types::transaction::eip2930::AccessListWithGasUsed;
-use ethers_providers::erc::ERCNFT;
 
 #[derive(Debug)]
 /// Middleware used for fetching gas prices over an API instead of `eth_gasPrice`
@@ -60,10 +54,6 @@ where
 
     fn inner(&self) -> &M {
         &self.inner
-    }
-
-    fn connection(&self) -> String {
-        self.inner.connection()
     }
 
     async fn fill_transaction(

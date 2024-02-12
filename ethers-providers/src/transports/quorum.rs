@@ -588,10 +588,6 @@ where
             }
         }
     }
-
-    fn connection(&self) -> String {
-        "127.0.0.1:8545".to_string()
-    }
 }
 
 // A stream that returns a value and the weight of its provider

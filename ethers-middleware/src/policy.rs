@@ -1,11 +1,9 @@
-use ethers_core::types::{transaction::eip2718::TypedTransaction, BlockId, Address, U64, Block, H256};
-use ethers_providers::{EscalatingPending, EscalationPolicy, FromErr, Middleware, PendingTransaction, Provider};
+use ethers_core::types::{transaction::eip2718::TypedTransaction, BlockId};
+use ethers_providers::{FromErr, Middleware, PendingTransaction};
 
 use async_trait::async_trait;
 use std::fmt::Debug;
 use thiserror::Error;
-use url::Url;
-use ethers_providers::erc::ERCNFT;
 
 /// Basic trait to ensure that transactions about to be sent follow certain rules.
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -95,10 +93,6 @@ where
 
     fn inner(&self) -> &M {
         &self.inner
-    }
-
-    fn connection(&self) -> String {
-        self.inner.connection()
     }
 
     /// This ensures the tx complies with the registered policy.

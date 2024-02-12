@@ -335,10 +335,6 @@ where
             }
         }
     }
-
-    fn connection(&self) -> String {
-        self.inner.connection()
-    }
 }
 
 /// Implements [RetryPolicy] that will retry requests that errored with

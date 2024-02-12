@@ -69,6 +69,7 @@ tempfile = "3.3.0"
 [features]
 default = ["ws", "rustls"]
 celo = ["ethers-core/celo"]
+swisstronik = []
 ws = ["tokio-tungstenite", "futures-channel"]
 ipc = ["tokio/io-util", "bytes", "futures-channel"]
 
