@@ -31,17 +31,9 @@ struct NodePublicKeyResponse {
 /// Returns Some(encrypted_data, used_key) if encryption was successful, returns None in case
 /// of error
 pub async fn encrypt_data(
-    node_url: &str,
+    node_public_key: [u8;32],
     data: &[u8],
 ) -> Option<(Vec<u8>, [u8; KEY_SIZE])> {
-    // Get node public key
-    let node_public_key = match get_node_public_key(node_url).await {
-        Some(pk) => pk,
-        None => {
-            return None;
-        }
-    };
-
     // Generate random encryption key
     let mut rng = OsRng;
     let mut key_material = [0u8; KEY_SIZE];
@@ -76,14 +68,7 @@ pub async fn encrypt_data(
 /// * data – ciphertext, received from node
 ///
 /// Returns Some(decrypted_data) in case of success, otherwise returns None
-pub async fn decrypt_data(node_url: &str, encryption_key: [u8; KEY_SIZE], data: &[u8]) -> Option<Vec<u8>> {
-    let node_public_key = match get_node_public_key(node_url).await {
-        Some(pk) => pk,
-        None => {
-            return None;
-        }
-    };
-
+pub async fn decrypt_data(node_public_key: [u8;32], encryption_key: [u8; KEY_SIZE], data: &[u8]) -> Option<Vec<u8>> {
     // Decrypt data
     let decrypted = encryption::decrypt_ecdh(
         encryption_key,
@@ -100,56 +85,9 @@ pub async fn decrypt_data(node_url: &str, encryption_key: [u8; KEY_SIZE], data: 
     }
 }
 
-/// Requests node public key, which will be used for derivation of shared
-/// encryption key
-///
-/// * url – URL of JSON-RPC to obtain node public key
-///
-/// Returns Some(node_public_key) in case of success, otherwise returns None
-pub async fn get_node_public_key(url: &str) -> Option<[u8; KEY_SIZE]> {
-    let url = match Url::parse(url) {
-        Ok(url) => url,
-        Err(err) => {
-            println!("Cannot obtain node public key. Reason: {:?}", err);
-            return None;
-        }
-    };
-
-    let body = serde_json::json!({
-        "id": 1,
-        "jsonrpc": "2.0",
-        "method": "eth_getNodePublicKey",
-        "params": ["latest"],
-    });
-
-    let client = Client::new();
-    let response = client.post(url).json(&body).send().await.ok()?;
-
-    if !response.status().is_success() {
-        println!("Request failed with status: {}", response.status());
-        return None;
-    }
-
-    let api_response: NodePublicKeyResponse = response.json().await.ok()?;
-    let result_str = api_response.result.trim_start_matches("0x");
-
-    let res = match hex::decode(result_str) {
-        Ok(res) => res,
-        Err(err) => {
-            println!("Cannot obtain node public key. Reason: {:?}", err);
-            return None;
-        }
-    };
-
-    Some(convert_to_fixed_size_array(res))
-}
-
-fn convert_to_fixed_size_array(data: Vec<u8>) -> [u8; KEY_SIZE] {
+pub fn convert_to_fixed_size_array(data: Vec<u8>) -> [u8; KEY_SIZE] {
     let mut fixed_array = [0u8; KEY_SIZE];
     fixed_array.copy_from_slice(&data[..KEY_SIZE]);
     fixed_array
 }
 
-fn bytearray_to_const_size<T, const N: usize>(v: Vec<T>) -> Option<[T; N]> {
-    v.try_into().ok()
-}
