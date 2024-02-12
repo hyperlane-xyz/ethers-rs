@@ -681,7 +681,7 @@ pub trait CeloMiddleware: Middleware {
 pub trait SwisstronikMiddleware: Middleware {
     async fn get_node_public_key(
         &self
-    ) -> Result<String, ProviderError> {
+    ) -> Result<[u8;32], ProviderError> {
         self.provider().get_node_public_key().await.map_err(FromErr::from)
     }
 }

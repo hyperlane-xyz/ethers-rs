@@ -39,9 +39,6 @@ use std::{
 use tracing::trace;
 use tracing_futures::Instrument;
 
-
-
-
 #[derive(Copy, Clone)]
 pub enum NodeClient {
     Geth,
@@ -308,7 +305,7 @@ impl<P: JsonRpcClient> SwisstronikMiddleware for Provider<P> {
     async fn get_node_public_key(
         &self
     ) -> Result<[u8;32], ProviderError> {
-        let resp: String =  self.request("eth_getNodePublicKey", []).await?;
+        let resp: String =  self.request("eth_getNodePublicKey", ()).await?;
         let converted = convert_to_fixed_size_array(hex::decode(resp.trim_start_matches("0x"))?);
         Ok(converted)
     }
@@ -579,55 +576,52 @@ impl<P: JsonRpcClient> Middleware for Provider<P> {
     /// Sends the read-only (constant) transaction to a single Ethereum node and return the result
     /// (as bytes) of executing it. This is free, since it does not change any state on the
     /// blockchain.
+    #[cfg(not(feature = "swisstronik"))]
     async fn call(
         &self,
         tx: &TypedTransaction,
         block: Option<BlockId>,
     ) -> Result<Bytes, ProviderError> {
-        let chain_id = self.get_chainid().await?;
-        if chain_id.as_u32() == 1291 && tx.data().is_some() && tx.to().is_some() {
-            // Obtain node public key and encrypt tx.data
-            let node_url = self.get_conn();
-
-            let (encrypted_data, encryption_key) = ethers_encryption::encrypt_data(
-                node_url.as_str(),
-                tx.data().unwrap()
-            ).await.ok_or_else(|| ProviderError::CustomError(String::from("Cannot encrypt transaction data")))?;
-
-            // Update tx.data field
-            let mut encrypted_tx = tx.clone();
-            let encrypted_tx = encrypted_tx.set_data(encrypted_data.into());
-
-            let tx = utils::serialize(encrypted_tx);
-            let block = utils::serialize(&block.unwrap_or_else(|| BlockNumber::Latest.into()));
-            let response: Result<Bytes, ProviderError>  = self.request("eth_call", [tx, block]).await;
-
-            match response {
-                Ok(result) => {
-                    let decrypted_data = ethers_encryption::decrypt_data(
-                        node_url.as_str(),
-                        encryption_key,
-                        &result,
-                    ).await;
-                    return match decrypted_data {
-                        Some(data) => {
-                            Ok(data.into())
-                        },
-                        None => {
-                            Err(ProviderError::CustomError("Cannot decrypt node response".to_string()))
-                        }
-                    }
-                },
-                _ => {},
-            }
-
-            return response
-        }
-
         let tx = utils::serialize(tx);
         let block = utils::serialize(&block.unwrap_or_else(|| BlockNumber::Latest.into()));
         self.request("eth_call", [tx, block]).await
     }
+
+    #[cfg(feature= "swisstronik")]
+    async fn call(
+        &self,
+        tx: &TypedTransaction,
+        block: Option<BlockId>,
+    ) -> Result<Bytes, ProviderError> {
+        if tx.data().is_some() && tx.to().is_some() {
+            // Obtain node public key and encrypt tx.data
+            let node_public_key = self.get_node_public_key().await?;
+            let (encrypted_data, encryption_key) = ethers_encryption::encrypt_data(node_public_key, tx.data().unwrap())
+                .await
+                .ok_or_else(|| ProviderError::CustomError(String::from("Cannot encrypt transaction data")))?;
+
+            // Update tx.data field
+            let mut encrypted_tx = tx.clone();
+            let encrypted_tx = encrypted_tx.set_data(encrypted_data.into());
+            let tx = utils::serialize(encrypted_tx);
+            let block = utils::serialize(&block.unwrap_or_else(|| BlockNumber::Latest.into()));
+            let response: Vec<u8>  = self.request("eth_call", [tx, block]).await?;
+            let decrypted_data = ethers_encryption::decrypt_data(node_public_key, encryption_key, &response).await;
+            match decrypted_data {
+                Some(data) => {
+                    Ok(data.into())
+                },
+                None => {
+                    Err(ProviderError::CustomError("Cannot decrypt node response".to_string()))
+                }
+            }
+        } else {
+            let tx = utils::serialize(tx);
+            let block = utils::serialize(&block.unwrap_or_else(|| BlockNumber::Latest.into()));
+            self.request("eth_call", [tx, block]).await
+        }
+    }
+
 
     /// Sends a transaction to a single Ethereum node and return the estimated amount of gas
     /// required (as a U256) to send it This is free, but only an estimate. Providing too little
