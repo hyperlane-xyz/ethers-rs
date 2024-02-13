@@ -1,5 +1,3 @@
-use serde_json::json;
-use reqwest::{Client, Url};
 use serde::{Deserialize, Serialize};
 use rand::{rngs::OsRng, RngCore};
 use std::convert::TryInto;
@@ -18,11 +16,6 @@ pub const NONCE_SIZE: usize = 15;
 /// Default size of private / public key
 pub const KEY_SIZE: usize = 32;
 
-#[derive(Debug, Deserialize)]
-struct NodePublicKeyResponse {
-    result: String,
-}
-
 /// Encrypts provided transaction or call data field
 ///
 /// * node_url - URL of JSON-RPC to obtain node public key
@@ -31,7 +24,7 @@ struct NodePublicKeyResponse {
 /// Returns Some(encrypted_data, used_key) if encryption was successful, returns None in case
 /// of error
 pub async fn encrypt_data(
-    node_public_key: [u8;32],
+    node_public_key: [u8; 32],
     data: &[u8],
 ) -> Option<(Vec<u8>, [u8; KEY_SIZE])> {
     // Generate random encryption key
@@ -42,14 +35,14 @@ pub async fn encrypt_data(
     // Derive encryption key
     let encryption_key = derivation::derive_encryption_key(
         &key_material,
-        USER_KEY_PREFIX.as_bytes()
+        USER_KEY_PREFIX.as_bytes(),
     );
 
     // Encrypt data
     let encrypted = encryption::encrypt_ecdh(
         encryption_key.clone(),
         node_public_key,
-        data
+        data,
     );
 
     match encrypted {
@@ -68,12 +61,12 @@ pub async fn encrypt_data(
 /// * data – ciphertext, received from node
 ///
 /// Returns Some(decrypted_data) in case of success, otherwise returns None
-pub async fn decrypt_data(node_public_key: [u8;32], encryption_key: [u8; KEY_SIZE], data: &[u8]) -> Option<Vec<u8>> {
+pub async fn decrypt_data(node_public_key: [u8; 32], encryption_key: [u8; KEY_SIZE], data: &[u8]) -> Option<Vec<u8>> {
     // Decrypt data
     let decrypted = encryption::decrypt_ecdh(
         encryption_key,
         node_public_key,
-        data
+        data,
     );
 
     match decrypted {

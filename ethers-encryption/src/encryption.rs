@@ -1,16 +1,15 @@
-use sha2::Sha256;
-use hmac::{Hmac, Mac};
+use hmac::{Mac};
 use rand::{rngs::OsRng, RngCore};
 use deoxys::aead::generic_array::GenericArray;
 use deoxys::aead::{Aead, KeyInit, Payload};
 use deoxys::DeoxysII256;
 
-use crate::{KEY_SIZE, TX_KEY_PREFIX, NONCE_SIZE, TAG_SIZE };
+use crate::{KEY_SIZE, TX_KEY_PREFIX, NONCE_SIZE, TAG_SIZE};
 
 use crate::derivation::{
     derive_shared_secret,
     derive_encryption_key,
-    x25519_private_to_public
+    x25519_private_to_public,
 };
 
 pub fn encrypt_ecdh(
@@ -73,9 +72,9 @@ pub fn deoxys_decrypt(
     encrypted_data: &[u8],
 ) -> Result<Vec<u8>, deoxys::Error> {
     let nonce = &encrypted_data[0..NONCE_SIZE];
-    let aad = &encrypted_data[NONCE_SIZE..NONCE_SIZE+TAG_SIZE];
-    let ciphertext = &encrypted_data[NONCE_SIZE+TAG_SIZE..];
+    let aad = &encrypted_data[NONCE_SIZE..NONCE_SIZE + TAG_SIZE];
+    let ciphertext = &encrypted_data[NONCE_SIZE + TAG_SIZE..];
     let payload = Payload { msg: ciphertext, aad };
     let key = GenericArray::from_slice(private_key);
-    DeoxysII256::new(key).decrypt( GenericArray::from_slice(nonce), payload)
+    DeoxysII256::new(key).decrypt(GenericArray::from_slice(nonce), payload)
 }

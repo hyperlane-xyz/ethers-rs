@@ -1,4 +1,4 @@
-use deoxys::aead::{Aead, KeyInit, Payload};
+use deoxys::aead::KeyInit;
 use sha2::Sha256;
 use hmac::{Hmac, Mac};
 
@@ -23,7 +23,7 @@ pub fn derive_shared_secret(private_key: [u8; KEY_SIZE], public_key: [u8; KEY_SI
 
 /// Derives encryption key using KDF
 pub fn derive_encryption_key(private_key: &[u8], salt: &[u8]) -> [u8; KEY_SIZE] {
-    let mut kdf =  <HmacSha256 as KeyInit>::new_from_slice(salt).unwrap();
+    let mut kdf = <HmacSha256 as KeyInit>::new_from_slice(salt).unwrap();
     kdf.update(private_key);
     let mut derived_key = [0u8; KEY_SIZE];
     let digest = kdf.finalize();
