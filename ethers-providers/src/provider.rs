@@ -305,7 +305,7 @@ impl<P: JsonRpcClient> SwisstronikMiddleware for Provider<P> {
     async fn get_node_public_key(
         &self
     ) -> Result<[u8;32], ProviderError> {
-        let resp: String =  self.request("eth_getNodePublicKey", ()).await?;
+        let resp: String =  self.request("eth_getNodePublicKey", ["latest"]).await?;
         let converted = convert_to_fixed_size_array(hex::decode(resp.trim_start_matches("0x"))?);
         Ok(converted)
     }
