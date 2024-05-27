@@ -202,7 +202,7 @@ where
                         {
                             Ok(new_tx_hash) => {
                                 let new_tx_hash = *new_tx_hash;
-                                tracing::trace!(
+                                tracing::debug!(
                                     old_tx_hash = ?tx_hash,
                                     new_tx_hash = ?new_tx_hash,
                                     old_gas_price = ?old_gas_price,
