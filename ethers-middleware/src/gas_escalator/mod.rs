@@ -137,7 +137,7 @@ where
     pub fn new(inner: M, escalator: E, frequency: Frequency) -> Self
     where
         E: Clone + 'static,
-        M: Clone + 'static,
+        M: 'static,
     {
         use tracing_futures::Instrument;
 
