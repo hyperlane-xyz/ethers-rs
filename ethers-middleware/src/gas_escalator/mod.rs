@@ -160,11 +160,13 @@ where
     ) -> Result<PendingTransaction<'_, M::Provider>, GasEscalatorError<M>> {
         let tx = tx.into();
 
+        println!("GAS_ESCALATOR: Sending transaction: {:?}", tx);
         let pending_tx = self
             .inner
             .send_transaction(tx.clone(), block)
             .await
             .map_err(GasEscalatorError::MiddlewareError)?;
+        println!("GAS_ESCALATOR: Sent transaction: {:?}", pending_tx);
 
         let tx = match tx {
             TypedTransaction::Legacy(inner) => inner,
@@ -309,6 +311,7 @@ impl<M, E> EscalationTask<M, E> {
                             match self.inner.send_transaction(replacement_tx.clone(), priority).await {
                                 Ok(new_tx_hash) => {
                                     let new_tx_hash = *new_tx_hash;
+                                    println!("escalated gas price");
                                     tracing::debug!(
                                         old_tx_hash = ?old_tx_hash,
                                         new_tx_hash = ?new_tx_hash,
