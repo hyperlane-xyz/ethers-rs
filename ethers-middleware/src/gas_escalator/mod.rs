@@ -171,7 +171,9 @@ where
         let tx = match tx {
             TypedTransaction::Legacy(inner) => inner,
             TypedTransaction::Eip2930(inner) => inner.tx,
-            _ => return Err(GasEscalatorError::UnsupportedTxType),
+            // don't run the escalator for this tx if it's not supported
+            _ => return Ok(pending_tx),
+            // _ => return Err(GasEscalatorError::UnsupportedTxType),
         };
 
         // insert the tx in the pending txs
