@@ -43,9 +43,6 @@ pub enum GasEscalatorError<M: Middleware> {
     #[error("{0}")]
     /// Thrown when an internal middleware errors
     MiddlewareError(M::Error),
-
-    #[error("Gas escalation is only supported for EIP2930 or Legacy transactions")]
-    UnsupportedTxType,
 }
 
 /// The frequency at which transactions will be bumped
