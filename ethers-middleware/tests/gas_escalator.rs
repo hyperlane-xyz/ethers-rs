@@ -4,7 +4,7 @@ use std::convert::TryFrom;
 use ethers_core::{types::*, utils::Anvil};
 use ethers_middleware::{
     gas_escalator::{Frequency, GasEscalatorMiddleware, GeometricGasPrice},
-    NonceManagerMiddleware, SignerMiddleware,
+    SignerMiddleware,
 };
 use ethers_providers::{Http, Middleware, Provider};
 use ethers_signers::{LocalWallet, Signer};
@@ -23,9 +23,6 @@ async fn gas_escalator_live() {
     let address = wallet.address();
     let provider = SignerMiddleware::new(provider, wallet);
 
-    // wrap with nonce manager
-    // let nonce_manager_provider = NonceManagerMiddleware::new(provider, address);
-
     // wrap with escalator
     let escalator = GeometricGasPrice::new(5.0, 1u64, Some(2_000_000_000_000u64));
     let provider = GasEscalatorMiddleware::new(provider, escalator, Frequency::Duration(300));
@@ -33,30 +30,13 @@ async fn gas_escalator_live() {
     let nonce = provider.get_transaction_count(address, None).await.unwrap();
     // 1 gwei default base fee
     let gas_price = U256::from(1_000_000_000_u64);
-    // 125000000000
-    let tx = TransactionRequest::pay(Address::zero(), 1u64).gas_price(gas_price).nonce(nonce);
-    // .chain_id(chain_id);
+    let tx = TransactionRequest::pay(Address::zero(), 1u64)
+        .gas_price(gas_price)
+        .nonce(nonce)
+        .chain_id(chain_id);
 
-    eprintln!("sending");
     let pending = provider.send_transaction(tx, None).await.expect("could not send");
-    eprintln!("waiting");
     let receipt = pending.await;
-    //  match pending.await {
-    //     Ok(receipt) => receipt.expect("dropped"),
-    //     Err(e) => {
-    //         eprintln!("reverted: {:?}", e);
-    //         panic!()
-    //     }
-    // };
-    // assert_eq!(receipt.from, address);
-    // assert_eq!(receipt.to, Some(Address::zero()));
-    println!("done escalating");
     sleep(Duration::from_secs(3)).await;
-    // assert!(receipt.effective_gas_price.unwrap() > gas_price * 2, "{receipt:?}");
-    println!(
-        "receipt gas price: , hardcoded_gas_price: {}, receipt: {:?}",
-        // receipt.effective_gas_price.unwrap(),
-        gas_price,
-        receipt
-    );
+    println!("receipt gas price: , hardcoded_gas_price: {}, receipt: {:?}", gas_price, receipt);
 }
