@@ -59,7 +59,6 @@ pub(crate) struct GasEscalatorMiddlewareInternal<M> {
     /// The transactions which are currently being monitored for escalation
     #[allow(clippy::type_complexity)]
     pub txs: ToEscalate,
-    // _background: oneshot::Sender<()>,
 }
 
 /// A Gas escalator allows bumping transactions' gas price to avoid getting them
@@ -191,16 +190,12 @@ where
         E: GasEscalator + 'static,
         M: 'static,
     {
-        // let (tx, rx) = oneshot::channel();
         let inner = Arc::new(inner);
 
         let txs: ToEscalate = Default::default();
 
-        let this = Arc::new(GasEscalatorMiddlewareInternal {
-            inner: inner.clone(),
-            txs: txs.clone(),
-            // _background: tx,
-        });
+        let this =
+            Arc::new(GasEscalatorMiddlewareInternal { inner: inner.clone(), txs: txs.clone() });
 
         let esc = EscalationTask { inner, escalator, frequency, txs };
 
@@ -219,7 +214,6 @@ pub struct EscalationTask<M, E> {
     escalator: E,
     frequency: Frequency,
     txs: ToEscalate,
-    // shutdown: oneshot::Receiver<()>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
