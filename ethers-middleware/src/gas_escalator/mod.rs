@@ -6,7 +6,7 @@ pub use linear::LinearGasPrice;
 
 use async_trait::async_trait;
 
-use futures_channel::oneshot;
+// use futures_channel::oneshot;
 use futures_util::{lock::Mutex, select_biased};
 use instant::Instant;
 use std::{pin::Pin, sync::Arc};
@@ -60,7 +60,7 @@ pub(crate) struct GasEscalatorMiddlewareInternal<M> {
     /// The transactions which are currently being monitored for escalation
     #[allow(clippy::type_complexity)]
     pub txs: ToEscalate,
-    _background: oneshot::Sender<()>,
+    // _background: oneshot::Sender<()>,
 }
 
 /// A Gas escalator allows bumping transactions' gas price to avoid getting them
@@ -192,7 +192,7 @@ where
         E: GasEscalator + 'static,
         M: 'static,
     {
-        let (tx, rx) = oneshot::channel();
+        // let (tx, rx) = oneshot::channel();
         let inner = Arc::new(inner);
 
         let txs: ToEscalate = Default::default();
@@ -200,10 +200,10 @@ where
         let this = Arc::new(GasEscalatorMiddlewareInternal {
             inner: inner.clone(),
             txs: txs.clone(),
-            _background: tx,
+            // _background: tx,
         });
 
-        let esc = EscalationTask { inner, escalator, frequency, txs, shutdown: rx };
+        let esc = EscalationTask { inner, escalator, frequency, txs };
 
         {
             spawn(esc.escalate().instrument(tracing::debug_span!("gas-escalation")));
@@ -220,19 +220,13 @@ pub struct EscalationTask<M, E> {
     escalator: E,
     frequency: Frequency,
     txs: ToEscalate,
-    shutdown: oneshot::Receiver<()>,
+    // shutdown: oneshot::Receiver<()>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 impl<M, E> EscalationTask<M, E> {
-    pub fn new(
-        inner: M,
-        escalator: E,
-        frequency: Frequency,
-        txs: ToEscalate,
-        shutdown: oneshot::Receiver<()>,
-    ) -> Self {
-        Self { inner, escalator, frequency, txs, shutdown }
+    pub fn new(inner: M, escalator: E, frequency: Frequency, txs: ToEscalate) -> Self {
+        Self { inner, escalator, frequency, txs }
     }
 
     async fn escalate(mut self) -> Result<(), GasEscalatorError<M>>
@@ -256,10 +250,6 @@ impl<M, E> EscalationTask<M, E> {
 
         loop {
             select_biased! {
-            _ = &mut self.shutdown => {
-                tracing::debug!("Shutting down escalation task, middleware has gone away");
-                return Ok(())
-            }
             opt = watcher.next() => {
                 if opt.is_none() {
                     tracing::error!("timing future has gone away");
