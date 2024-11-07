@@ -251,9 +251,11 @@ impl<M, E> EscalationTask<M, E> {
                 std::mem::take(&mut (*txs))
                 // Lock scope ends
             };
-            println!("In the escalator watcher loop. Monitored txs: {:?}", txs);
 
             let len = txs.len();
+            if len > 0 {
+                println!("In the escalator watcher loop. Monitored txs: {:?}", txs);
+            }
             // Pop all transactions and re-insert those that have not been included yet
             for _ in 0..len {
                 // this must never panic as we're explicitly within bounds
