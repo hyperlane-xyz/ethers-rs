@@ -257,7 +257,7 @@ impl<M, E> EscalationTask<M, E> {
             // Pop all transactions and re-insert those that have not been included yet
             for _ in 0..len {
                 // this must never panic as we're explicitly within bounds
-                let (old_tx_hash, mut replacement_tx, time, priority) =
+                let (old_tx_hash, mut replacement_tx, old_creation_time, priority) =
                     txs.pop().expect("should have element in vector");
 
                 let receipt = self
@@ -272,12 +272,13 @@ impl<M, E> EscalationTask<M, E> {
                     let old_gas_price = replacement_tx.gas_price.expect("gas price must be set");
                     // Get the new gas price based on how much time passed since the
                     // tx was last broadcast
-                    let new_gas_price = self
-                        .escalator
-                        .get_gas_price(old_gas_price, now.duration_since(time).as_secs());
+                    let new_gas_price = self.escalator.get_gas_price(
+                        old_gas_price,
+                        now.duration_since(old_creation_time).as_secs(),
+                    );
 
-                    let new_txhash = if new_gas_price == old_gas_price {
-                        old_tx_hash
+                    let (new_txhash, new_creation_time) = if new_gas_price == old_gas_price {
+                        (old_tx_hash, old_creation_time)
                     } else {
                         // bump the gas price
                         replacement_tx.gas_price = Some(new_gas_price);
@@ -297,7 +298,7 @@ impl<M, E> EscalationTask<M, E> {
                                     new_gas_price = ?new_gas_price,
                                     "escalated gas price"
                                 );
-                                new_tx_hash
+                                (new_tx_hash, Instant::now())
                             }
                             Err(err) => {
                                 if err.to_string().contains("nonce too low") {
@@ -317,7 +318,7 @@ impl<M, E> EscalationTask<M, E> {
                             }
                         }
                     };
-                    txs.push((new_txhash, replacement_tx, time, priority));
+                    txs.push((new_txhash, replacement_tx, new_creation_time, priority));
                 }
             }
             // after this big ugly loop, we dump everything back in
