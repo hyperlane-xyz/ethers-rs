@@ -10,7 +10,7 @@ use futures_util::lock::Mutex;
 use instant::Instant;
 use std::{pin::Pin, sync::Arc};
 use thiserror::Error;
-use tracing;
+use tracing::{self, instrument};
 use tracing_futures::Instrument;
 
 use ethers_core::types::{
@@ -185,6 +185,7 @@ where
     /// escalation frequency (per block or per second)
     #[allow(clippy::let_and_return)]
     #[cfg(not(target_arch = "wasm32"))]
+    #[instrument(skip(inner, escalator, frequency))]
     pub fn new<E>(inner: M, escalator: E, frequency: Frequency) -> Self
     where
         E: GasEscalator + 'static,
@@ -199,9 +200,7 @@ where
 
         let esc = EscalationTask { inner, escalator, frequency, txs };
 
-        {
-            spawn(esc.escalate().instrument(tracing::debug_span!("gas-escalation")));
-        }
+        spawn(esc.escalate().instrument(tracing::debug_span!("gas_escalation")));
 
         Self { inner: this }
     }
