@@ -254,7 +254,7 @@ impl<M, E> EscalationTask<M, E> {
 
             let len = txs.len();
             if len > 0 {
-                println!("In the escalator watcher loop. Monitored txs: {:?}", txs);
+                tracing::debug!(?txs, "In the escalator watcher loop. Monitoring txs");
             }
             // Pop all transactions and re-insert those that have not been included yet
             for _ in 0..len {
@@ -271,7 +271,10 @@ impl<M, E> EscalationTask<M, E> {
                 tracing::trace!(tx_hash = ?old_tx_hash, "checking if exists");
 
                 if receipt.is_none() {
-                    let old_gas_price = replacement_tx.gas_price.expect("gas price must be set");
+                    let Some(old_gas_price) = replacement_tx.gas_price else {
+                        tracing::error!(tx=?old_tx_hash, "gas price is not set for transaction, dropping from escalator");
+                        continue;
+                    };
                     // Get the new gas price based on how much time passed since the
                     // tx was last broadcast
                     let new_gas_price = self.escalator.get_gas_price(
@@ -289,10 +292,6 @@ impl<M, E> EscalationTask<M, E> {
                         match self.inner.send_transaction(replacement_tx.clone(), priority).await {
                             Ok(new_tx_hash) => {
                                 let new_tx_hash = *new_tx_hash;
-                                println!(
-                                    "escalated gas price for tx hash: {:?}. New tx hash: {:?}. Old gas price: {:?}. New gas price: {:?}",
-                                    old_tx_hash, new_tx_hash, old_gas_price, new_gas_price
-                                );
                                 tracing::debug!(
                                     old_tx_hash = ?old_tx_hash,
                                     new_tx_hash = ?new_tx_hash,

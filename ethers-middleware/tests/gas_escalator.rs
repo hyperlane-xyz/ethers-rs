@@ -13,6 +13,8 @@ use tokio::time::sleep;
 
 #[tokio::test]
 async fn gas_escalator_live() {
+    // TODO: show tracing logs in the test
+
     let anvil = Anvil::new().port(8545u16).block_time(10u64).spawn();
     let chain_id = anvil.chain_id();
     let provider = Provider::<Http>::try_from(anvil.endpoint()).unwrap();
