@@ -22,6 +22,7 @@ members = [
     "ethers-etherscan",
     "ethers-solc",
     "examples/ethers-wasm",
+    "ethers-encryption",
 ]
 
 default-members = [
@@ -33,6 +34,7 @@ default-members = [
     "ethers-middleware",
     "ethers-etherscan",
     "ethers-solc",
+    "ethers-encryption",
 ]
 
 [package.metadata.docs.rs]

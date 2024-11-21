@@ -675,6 +675,17 @@ pub trait CeloMiddleware: Middleware {
     }
 }
 
+#[cfg(feature = "swisstronik")]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+pub trait SwisstronikMiddleware: Middleware {
+    async fn get_node_public_key(
+        &self
+    ) -> Result<[u8;32], ProviderError> {
+        self.provider().get_node_public_key().await.map_err(FromErr::from)
+    }
+}
+
 pub use test_provider::{GOERLI, MAINNET, ROPSTEN};
 
 /// Pre-instantiated Infura HTTP clients which rotate through multiple API keys

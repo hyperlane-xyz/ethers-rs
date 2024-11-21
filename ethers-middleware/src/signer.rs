@@ -9,6 +9,10 @@ use std::convert::TryFrom;
 use async_trait::async_trait;
 use thiserror::Error;
 
+#[cfg(feature = "swisstronik")]
+use ethers_providers::SwisstronikMiddleware;
+
+
 #[derive(Clone, Debug)]
 /// Middleware used for locally signing transactions, compatible with any implementer
 /// of the [`Signer`] trait.
@@ -99,6 +103,12 @@ pub enum SignerMiddlewareError<M: Middleware, S: Signer> {
     /// Thrown if the signer's chain_id is different than the chain_id of the transaction
     #[error("specified chain_id is different than the signer's chain_id")]
     DifferentChainID,
+    /// Thrown if during encryption we couldn't obtain node public key
+    #[error("failed to get node public key")]
+    FailedNodePublicKey,
+    /// Thrown if during encryption there was an error
+    #[error("failed to encrypt")]
+    FailedToEncrypt,
 }
 
 // Helper functions for locally signing transactions
@@ -125,6 +135,7 @@ where
     /// If the transaction does not have a chain id set, it sets it to the signer's chain id.
     /// Returns an error if the transaction's existing chain id does not match the signer's chain
     /// id.
+    #[cfg(not(feature = "swisstronik"))]
     async fn sign_transaction(
         &self,
         mut tx: TypedTransaction,
@@ -148,6 +159,43 @@ where
         // Return the raw rlp-encoded signed transaction
         Ok(tx.rlp_signed(&signature))
     }
+
+    #[cfg(feature = "swisstronik")]
+    async fn sign_transaction(
+        &self,
+        mut tx: TypedTransaction,
+    ) -> Result<Bytes, SignerMiddlewareError<M, S>> {
+// compare chain_id and use signer's chain_id if the tranasaction's chain_id is None,
+        // return an error if they are not consistent
+        let chain_id = self.signer.chain_id();
+        match tx.chain_id() {
+            Some(id) if id.as_u64() != chain_id => {
+                return Err(SignerMiddlewareError::DifferentChainID)
+            }
+            None => {
+                tx.set_chain_id(chain_id);
+            }
+            _ => {}
+        }
+
+        if tx.to().is_some() && tx.data().is_some() {
+            // Encryption transaction data in case of swisstronik network
+            let node_enc_key = self.provider().get_node_public_key().await.map_err(|_| SignerMiddlewareError::FailedNodePublicKey)?;
+            // Encrypt call data in case of Swisstronik network
+            let (encrypted_data, _) = ethers_encryption::encrypt_data(node_enc_key, tx.data().unwrap())
+                .await.ok_or(SignerMiddlewareError::FailedToEncrypt)?;
+
+            // Update call data
+            tx.set_data(encrypted_data.into());
+        }
+
+        let signature =
+            self.signer.sign_transaction(&tx).await.map_err(SignerMiddlewareError::SignerError)?;
+
+        // Return the raw rlp-encoded signed transaction
+        Ok(tx.rlp_signed(&signature))
+    }
+
 
     /// Returns the client's address
     pub fn address(&self) -> Address {

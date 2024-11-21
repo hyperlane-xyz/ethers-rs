@@ -1,11 +1,4 @@
-use crate::{
-    call_raw::CallBuilder,
-    ens, erc, maybe,
-    pubsub::{PubsubClient, SubscriptionStream},
-    stream::{FilterWatcher, DEFAULT_LOCAL_POLL_INTERVAL, DEFAULT_POLL_INTERVAL},
-    FromErr, Http as HttpProvider, JsonRpcClient, JsonRpcClientWrapper, LogQuery, MockProvider,
-    PendingTransaction, QuorumProvider, RwClient, SyncingStatus,
-};
+use crate::{call_raw::CallBuilder, ens, erc, maybe, pubsub::{PubsubClient, SubscriptionStream}, stream::{FilterWatcher, DEFAULT_LOCAL_POLL_INTERVAL, DEFAULT_POLL_INTERVAL}, FromErr, Http as HttpProvider, JsonRpcClient, JsonRpcClientWrapper, LogQuery, MockProvider, PendingTransaction, QuorumProvider, RwClient, SyncingStatus, EscalationPolicy, EscalatingPending};
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "ws"))]
 use crate::transports::Authorization;
@@ -14,6 +7,11 @@ use crate::transports::{HttpRateLimitRetryPolicy, RetryClient};
 
 #[cfg(feature = "celo")]
 use crate::CeloMiddleware;
+#[cfg(feature = "swisstronik")]
+use crate::SwisstronikMiddleware;
+#[cfg(feature = "swisstronik")]
+use ethers_encryption::convert_to_fixed_size_array;
+
 use crate::Middleware;
 use async_trait::async_trait;
 
@@ -299,6 +297,20 @@ impl<P: JsonRpcClient> CeloMiddleware for Provider<P> {
     }
 }
 
+
+#[cfg(feature = "swisstronik")]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl<P: JsonRpcClient> SwisstronikMiddleware for Provider<P> {
+    async fn get_node_public_key(
+        &self
+    ) -> Result<[u8;32], ProviderError> {
+        let resp: String =  self.request("eth_getNodePublicKey", ["latest"]).await?;
+        let converted = convert_to_fixed_size_array(hex::decode(resp.trim_start_matches("0x"))?);
+        Ok(converted)
+    }
+}
+
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl<P: JsonRpcClient> Middleware for Provider<P> {
@@ -564,6 +576,7 @@ impl<P: JsonRpcClient> Middleware for Provider<P> {
     /// Sends the read-only (constant) transaction to a single Ethereum node and return the result
     /// (as bytes) of executing it. This is free, since it does not change any state on the
     /// blockchain.
+    #[cfg(not(feature = "swisstronik"))]
     async fn call(
         &self,
         tx: &TypedTransaction,
@@ -574,10 +587,47 @@ impl<P: JsonRpcClient> Middleware for Provider<P> {
         self.request("eth_call", [tx, block]).await
     }
 
+    #[cfg(feature= "swisstronik")]
+    async fn call(
+        &self,
+        tx: &TypedTransaction,
+        block: Option<BlockId>,
+    ) -> Result<Bytes, ProviderError> {
+        if tx.data().is_some() && tx.to().is_some() {
+            // Obtain node public key and encrypt tx.data
+            let node_public_key = self.get_node_public_key().await?;
+            let (encrypted_data, encryption_key) = ethers_encryption::encrypt_data(node_public_key, tx.data().unwrap())
+                .await
+                .ok_or_else(|| ProviderError::CustomError(String::from("Cannot encrypt transaction data")))?;
+
+            // Update tx.data field
+            let mut encrypted_tx = tx.clone();
+            let encrypted_tx = encrypted_tx.set_data(encrypted_data.into());
+            let tx = utils::serialize(encrypted_tx);
+            let block = utils::serialize(&block.unwrap_or_else(|| BlockNumber::Latest.into()));
+            let response: Vec<u8>  = self.request("eth_call", [tx, block]).await?;
+            let decrypted_data = ethers_encryption::decrypt_data(node_public_key, encryption_key, &response).await;
+            match decrypted_data {
+                Some(data) => {
+                    Ok(data.into())
+                },
+                None => {
+                    Err(ProviderError::CustomError("Cannot decrypt node response".to_string()))
+                }
+            }
+        } else {
+            let tx = utils::serialize(tx);
+            let block = utils::serialize(&block.unwrap_or_else(|| BlockNumber::Latest.into()));
+            self.request("eth_call", [tx, block]).await
+        }
+    }
+
+
     /// Sends a transaction to a single Ethereum node and return the estimated amount of gas
     /// required (as a U256) to send it This is free, but only an estimate. Providing too little
     /// gas will result in a transaction being rejected (while still consuming all provided
     /// gas).
+    #[cfg(not(feature = "swisstronik"))]
     async fn estimate_gas(
         &self,
         tx: &TypedTransaction,
@@ -593,6 +643,36 @@ impl<P: JsonRpcClient> Middleware for Provider<P> {
         };
         self.request("eth_estimateGas", params).await
     }
+    #[cfg(feature = "swisstronik")]
+    async fn estimate_gas(
+        &self,
+        tx: &TypedTransaction,
+        block: Option<BlockId>,
+    ) -> Result<U256, ProviderError> {
+        let tx = if tx.data().is_some() && tx.to().is_some() {
+            // Obtain node public key and encrypt tx.data
+            let node_public_key = self.get_node_public_key().await?;
+            let (encrypted_data, _) = ethers_encryption::encrypt_data(node_public_key, tx.data().unwrap())
+                .await
+                .ok_or_else(|| ProviderError::CustomError(String::from("Cannot encrypt transaction data")))?;
+
+            // Update tx.data field
+            let mut encrypted_tx = tx.clone();
+            let encrypted_tx = encrypted_tx.set_data(encrypted_data.into());
+            utils::serialize(encrypted_tx)
+        } else {
+            utils::serialize(tx)
+        };
+        // Some nodes (e.g. old Optimism clients) don't support a block ID being passed as a param,
+        // so refrain from defaulting to BlockNumber::Latest.
+        let params = if let Some(block_id) = block {
+            vec![tx, utils::serialize(&block_id)]
+        } else {
+            vec![tx]
+        };
+        return self.request("eth_estimateGas", params).await
+    }
+
 
     async fn create_access_list(
         &self,

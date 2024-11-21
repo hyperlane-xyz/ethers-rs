@@ -115,6 +115,21 @@ mod eth_tests {
     }
 }
 
+
+#[cfg(feature = "swisstronik")]
+mod swisstronik_tests {
+    use super::*;
+    use ethers_providers::SwisstronikMiddleware;
+
+    #[tokio::test]
+    async fn get_block() {
+        let provider =
+            Provider::<Http>::try_from("https://json-rpc.testnet.swisstronik.com").unwrap();
+
+        provider.get_node_public_key().await.unwrap();
+    }
+}
+
 #[cfg(feature = "celo")]
 mod celo_tests {
     use super::*;
