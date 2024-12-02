@@ -33,6 +33,7 @@ async fn gas_escalator_legacy_works() {
     let escalator = GeometricGasPrice::new(1.1, 2u64, Some(2_000_000_000_000u64));
     let provider = GasEscalatorMiddleware::new(provider, escalator, Frequency::Duration(300));
 
+    // TODO: get this to work
     // set the gas price to 10 gwei, so we need to escalate twice
     // this works but the tx still goes through regardless of its gas price for some reason
     // reqwest::Client::new()
@@ -80,6 +81,7 @@ async fn gas_escalator_1559_works() {
     let escalator = GeometricGasPrice::new(1.1, 2u64, Some(2_000_000_000_000u64));
     let provider = GasEscalatorMiddleware::new(provider, escalator, Frequency::Duration(300));
 
+    // TODO: get this to work
     // set the gas price to 10 gwei, so we need to escalate twice
     // this works but the tx still goes through regardless of its gas price for some reason
     // reqwest::Client::new()
