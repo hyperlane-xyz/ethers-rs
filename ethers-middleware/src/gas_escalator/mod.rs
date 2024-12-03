@@ -375,6 +375,7 @@ impl<M, E: Clone> EscalationTask<M, E> {
 
             if receipt.is_some() {
                 // tx was already included, can drop from escalator
+                tracing::debug!(tx = ?monitored_tx, receipt = ?receipt, "transaction was included onchain, dropping from escalator");
                 continue;
             }
             let Some(new_tx) = monitored_tx.escalate_gas_price(self.escalator.clone()) else {
