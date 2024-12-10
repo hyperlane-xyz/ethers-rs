@@ -338,6 +338,7 @@ impl<M, E: Clone> EscalationTask<M, E> {
                 tracing::debug!(
                     old_tx = ?old_monitored_tx,
                     new_tx = ?new_tx,
+                    new_tx_hash = ?new_tx_hash,
                     "escalated gas price"
                 );
                 // Return the new tx hash to monitor and the time it was created.
