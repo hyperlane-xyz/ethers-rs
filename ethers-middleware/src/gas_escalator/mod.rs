@@ -261,6 +261,9 @@ pub struct EscalationTask<M, E> {
     txs: ToEscalate,
 }
 
+const RETRYABLE_ERRORS: [&str; 3] =
+    ["replacement transaction underpriced", "already known", "Fair pubdata price too high"];
+
 #[cfg(not(target_arch = "wasm32"))]
 impl<M, E: Clone> EscalationTask<M, E> {
     pub fn new(inner: M, escalator: E, frequency: Frequency, txs: ToEscalate) -> Self {
@@ -280,23 +283,13 @@ impl<M, E: Clone> EscalationTask<M, E> {
             // already landed onchain, meaning we no longer need to escalate it
             tracing::warn!(err = err_message, ?old_monitored_tx.hash, ?new_tx, "Nonce error when escalating gas price. Tx may have already been included onchain. Dropping it from escalator");
             None
-        } else if err_message.contains("replacement transaction underpriced") {
-            // the gas escalation wasn't sufficient
+        } else if RETRYABLE_ERRORS.iter().any(|err_msg| err_message.contains(err_msg)) {
+            // if the error is one of the known retryable errors, we can keep trying to escalate
             tracing::warn!(
                 err = err_message,
                 old_tx = ?old_monitored_tx,
                 new_tx = ?new_tx,
-                "Escalated gas price was underpriced, re-adding to escalator"
-            );
-            // return the old tx_hash and creation time so the transaction is re-escalated
-            // as soon as `monitored_txs` are evaluated again
-            Some((old_monitored_tx.hash, old_monitored_tx.creation_time))
-        } else if err_message.contains("already known") {
-            tracing::warn!(
-                err = err_message,
-                old_tx = ?old_monitored_tx,
-                new_tx = ?new_tx,
-                "The escalator broadcasted the same transaction twice. Re-adding to attempt re-escalating"
+                "Encountered retryable error, re-adding to escalator"
             );
             // return the old tx_hash and creation time so the transaction is re-escalated
             // as soon as `monitored_txs` are evaluated again
