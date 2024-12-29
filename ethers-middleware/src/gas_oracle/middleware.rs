@@ -56,6 +56,7 @@ where
         &self.inner
     }
 
+    #[instrument(skip(self), name = "GasOracle::fill_transaction")]
     async fn fill_transaction(
         &self,
         tx: &mut TypedTransaction,
@@ -85,6 +86,7 @@ where
                 }
             }
         };
+        tracing::debug!(?tx, "Filled transaction");
 
         self.inner().fill_transaction(tx, block).await.map_err(FromErr::from)
     }
@@ -100,6 +102,7 @@ where
         Ok(self.gas_oracle.estimate_eip1559_fees().await?)
     }
 
+    #[instrument(skip(self), name = "GasOracle::send_transaction")]
     async fn send_transaction<T: Into<TypedTransaction> + Send + Sync>(
         &self,
         tx: T,

@@ -106,6 +106,7 @@ where
         &self.inner
     }
 
+    #[instrument(skip(self), name = "NonceManager::fill_transaction")]
     async fn fill_transaction(
         &self,
         tx: &mut TypedTransaction,
@@ -125,6 +126,7 @@ where
     /// Signs and broadcasts the transaction. The optional parameter `block` can be passed so that
     /// gas cost and nonce calculations take it into account. For simple transactions this can be
     /// left to `None`.
+    #[instrument(skip(self), name = "NonceManager::send_transaction")]
     async fn send_transaction<T: Into<TypedTransaction> + Send + Sync>(
         &self,
         tx: T,
@@ -135,21 +137,47 @@ where
         if tx.nonce().is_none() {
             tx.set_nonce(self.get_transaction_count_with_manager(block).await?);
         }
-
+        let nonce = tx.nonce();
+        tracing::debug!(
+            tx=?tx,
+            ?nonce,
+            "Sending transaction"
+        );
         match self.inner.send_transaction(tx.clone(), block).await {
-            Ok(tx_hash) => Ok(tx_hash),
+            Ok(pending_tx) => {
+                tracing::debug!(?nonce, "Sent transaction");
+                Ok(pending_tx)
+            }
             Err(err) => {
-                let nonce = self.get_transaction_count(self.address, block).await?;
-                if nonce != self.nonce.load(Ordering::SeqCst).into() {
+                tracing::error!(
+                    ?nonce,
+                    error=?err,
+                    "Error sending transaction. Checking onchain nonce."
+                );
+                let onchain_nonce = self.get_transaction_count(self.address, block).await?;
+                let internal_nonce = self.nonce.load(Ordering::SeqCst).into();
+                if onchain_nonce != internal_nonce.into() {
                     // try re-submitting the transaction with the correct nonce if there
                     // was a nonce mismatch
-                    self.nonce.store(nonce.as_u64(), Ordering::SeqCst);
-                    tx.set_nonce(nonce);
+                    self.nonce.store(onchain_nonce.as_u64(), Ordering::SeqCst);
+                    tx.set_nonce(onchain_nonce);
+                    tracing::warn!(
+                        onchain_nonce=?onchain_nonce.as_u64(),
+                        ?internal_nonce
+                        error=?err,
+                        "Onchain nonce didn't match internal nonce. Resending transaction with updated nonce."
+                    );
                     self.inner
                         .send_transaction(tx, block)
                         .await
                         .map_err(NonceManagerError::MiddlewareError)
                 } else {
+                    tracing::warn!(
+                        onchain_nonce=?onchain_nonce.as_u64(),
+                        ?internal_nonce
+                        error=?err,
+                        "Onchain nonce matches internal nonce. Propagating error."
+                    );
                     // propagate the error otherwise
                     Err(NonceManagerError::MiddlewareError(err))
                 }
