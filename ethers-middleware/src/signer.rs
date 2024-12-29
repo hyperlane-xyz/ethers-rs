@@ -5,6 +5,7 @@ use ethers_core::types::{
 use ethers_providers::{maybe, FromErr, Middleware, PendingTransaction};
 use ethers_signers::Signer;
 use std::convert::TryFrom;
+use tracing::instrument;
 
 use async_trait::async_trait;
 use thiserror::Error;
@@ -277,13 +278,14 @@ where
     /// Signs and broadcasts the transaction. The optional parameter `block` can be passed so that
     /// gas cost and nonce calculations take it into account. For simple transactions this can be
     /// left to `None`.
-    #[instrument(skip(self), name = "SignerMiddleware::send_transaction")]
+    #[instrument(skip(self, tx), name = "SignerMiddleware::send_transaction")]
     async fn send_transaction<T: Into<TypedTransaction> + Send + Sync>(
         &self,
         tx: T,
         block: Option<BlockId>,
     ) -> Result<PendingTransaction<'_, Self::Provider>, Self::Error> {
         let mut tx = tx.into();
+        tracing::debug!(?tx, "Sending transaction");
 
         // fill any missing fields
         self.fill_transaction(&mut tx, block).await?;

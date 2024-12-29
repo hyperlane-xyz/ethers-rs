@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use ethers_core::types::{transaction::eip2718::TypedTransaction, *};
 use ethers_providers::{FromErr, Middleware, PendingTransaction};
 use thiserror::Error;
+use tracing::instrument;
 
 #[derive(Debug)]
 /// Middleware used for fetching gas prices over an API instead of `eth_gasPrice`
@@ -102,13 +103,14 @@ where
         Ok(self.gas_oracle.estimate_eip1559_fees().await?)
     }
 
-    #[instrument(skip(self), name = "GasOracle::send_transaction")]
+    #[instrument(skip(self, tx), name = "GasOracle::send_transaction")]
     async fn send_transaction<T: Into<TypedTransaction> + Send + Sync>(
         &self,
         tx: T,
         block: Option<BlockId>,
     ) -> Result<PendingTransaction<'_, Self::Provider>, Self::Error> {
         let mut tx = tx.into();
+        tracing::debug!(?tx, "Sending transaction");
         self.fill_transaction(&mut tx, block).await?;
         self.inner.send_transaction(tx, block).await.map_err(MiddlewareError::MiddlewareError)
     }

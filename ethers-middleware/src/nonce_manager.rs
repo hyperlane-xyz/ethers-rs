@@ -3,6 +3,7 @@ use ethers_core::types::{transaction::eip2718::TypedTransaction, *};
 use ethers_providers::{FromErr, Middleware, PendingTransaction};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use thiserror::Error;
+use tracing::instrument;
 
 #[derive(Debug)]
 /// Middleware used for calculating nonces locally, useful for signing multiple
@@ -126,13 +127,17 @@ where
     /// Signs and broadcasts the transaction. The optional parameter `block` can be passed so that
     /// gas cost and nonce calculations take it into account. For simple transactions this can be
     /// left to `None`.
-    #[instrument(skip(self), name = "NonceManager::send_transaction")]
+    #[instrument(skip(self, tx), name = "NonceManager::send_transaction")]
     async fn send_transaction<T: Into<TypedTransaction> + Send + Sync>(
         &self,
         tx: T,
         block: Option<BlockId>,
     ) -> Result<PendingTransaction<'_, Self::Provider>, Self::Error> {
         let mut tx = tx.into();
+        tracing::debug!(
+            tx=?tx,
+            "Sending transaction"
+        );
 
         if tx.nonce().is_none() {
             tx.set_nonce(self.get_transaction_count_with_manager(block).await?);
@@ -155,7 +160,7 @@ where
                     "Error sending transaction. Checking onchain nonce."
                 );
                 let onchain_nonce = self.get_transaction_count(self.address, block).await?;
-                let internal_nonce = self.nonce.load(Ordering::SeqCst).into();
+                let internal_nonce = self.nonce.load(Ordering::SeqCst);
                 if onchain_nonce != internal_nonce.into() {
                     // try re-submitting the transaction with the correct nonce if there
                     // was a nonce mismatch
@@ -163,7 +168,7 @@ where
                     tx.set_nonce(onchain_nonce);
                     tracing::warn!(
                         onchain_nonce=?onchain_nonce.as_u64(),
-                        ?internal_nonce
+                        ?internal_nonce,
                         error=?err,
                         "Onchain nonce didn't match internal nonce. Resending transaction with updated nonce."
                     );
@@ -174,7 +179,7 @@ where
                 } else {
                     tracing::warn!(
                         onchain_nonce=?onchain_nonce.as_u64(),
-                        ?internal_nonce
+                        ?internal_nonce,
                         error=?err,
                         "Onchain nonce matches internal nonce. Propagating error."
                     );
