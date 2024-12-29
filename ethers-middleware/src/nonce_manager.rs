@@ -127,7 +127,7 @@ where
     /// Signs and broadcasts the transaction. The optional parameter `block` can be passed so that
     /// gas cost and nonce calculations take it into account. For simple transactions this can be
     /// left to `None`.
-    #[instrument(skip(self, tx), name = "NonceManager::send_transaction")]
+    #[instrument(skip(self, tx, block), name = "NonceManager::send_transaction")]
     async fn send_transaction<T: Into<TypedTransaction> + Send + Sync>(
         &self,
         tx: T,

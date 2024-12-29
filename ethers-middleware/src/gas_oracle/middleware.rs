@@ -103,7 +103,7 @@ where
         Ok(self.gas_oracle.estimate_eip1559_fees().await?)
     }
 
-    #[instrument(skip(self, tx), name = "GasOracle::send_transaction")]
+    #[instrument(skip(self, tx, block), name = "GasOracle::send_transaction")]
     async fn send_transaction<T: Into<TypedTransaction> + Send + Sync>(
         &self,
         tx: T,
