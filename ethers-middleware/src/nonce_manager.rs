@@ -134,20 +134,12 @@ where
         block: Option<BlockId>,
     ) -> Result<PendingTransaction<'_, Self::Provider>, Self::Error> {
         let mut tx = tx.into();
-        tracing::debug!(
-            tx=?tx,
-            "Sending transaction"
-        );
 
         if tx.nonce().is_none() {
             tx.set_nonce(self.get_transaction_count_with_manager(block).await?);
         }
         let nonce = tx.nonce();
-        tracing::debug!(
-            tx=?tx,
-            ?nonce,
-            "Sending transaction"
-        );
+        tracing::debug!(?nonce, "Sending transaction");
         match self.inner.send_transaction(tx.clone(), block).await {
             Ok(pending_tx) => {
                 tracing::debug!(?nonce, "Sent transaction");

@@ -285,7 +285,7 @@ where
         block: Option<BlockId>,
     ) -> Result<PendingTransaction<'_, Self::Provider>, Self::Error> {
         let mut tx = tx.into();
-        tracing::debug!(?tx, "Sending transaction");
+        tracing::debug!(nonce=?tx.nonce(), "Sending transaction");
 
         // fill any missing fields
         self.fill_transaction(&mut tx, block).await?;

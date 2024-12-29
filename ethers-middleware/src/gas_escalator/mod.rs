@@ -287,7 +287,7 @@ impl<M, E: Clone> EscalationTask<M, E> {
             // if the error is one of the known retryable errors, we can keep trying to escalate
             tracing::warn!(
                 err = err_message,
-                old_tx = ?old_monitored_tx,
+                old_tx = ?old_monitored_tx.hash,
                 new_tx = ?new_tx,
                 "Encountered retryable error, re-adding to escalator"
             );
@@ -297,7 +297,7 @@ impl<M, E: Clone> EscalationTask<M, E> {
         } else {
             tracing::error!(
                 err = err_message,
-                old_tx = ?old_monitored_tx,
+                old_tx = ?old_monitored_tx.hash,
                 new_tx = ?new_tx,
                 "Unexpected error when broadcasting gas-escalated transaction. Dropping it from escalator."
             );
@@ -369,7 +369,7 @@ impl<M, E: Clone> EscalationTask<M, E> {
 
             if receipt.is_some() {
                 // tx was already included, can drop from escalator
-                tracing::debug!(tx = ?monitored_tx, "Transaction was included onchain, dropping from escalator");
+                tracing::debug!(tx = ?monitored_tx.hash, "Transaction was included onchain, dropping from escalator");
                 continue;
             }
             let Some(new_tx) = monitored_tx.escalate_gas_price(self.escalator.clone()) else {
