@@ -184,6 +184,7 @@ where
         &self.inner.inner
     }
 
+    #[instrument(skip(self, tx, block), name = "GasOracle::send_transaction")]
     async fn send_transaction<T: Into<TypedTransaction> + Send + Sync>(
         &self,
         tx: T,
@@ -210,6 +211,7 @@ where
             .await
             .map_err(GasEscalatorError::MiddlewareError)?;
 
+        tracing::debug!(tx = ?tx, tx_hash = ?pending_tx.tx_hash(), "Sent tx, adding to gas escalator watcher");
         // insert the tx in the pending txs
         let mut lock = self.txs.lock().await;
         lock.push(MonitoredTransaction {
