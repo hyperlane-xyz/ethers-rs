@@ -5,6 +5,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use thiserror::Error;
 use tracing::instrument;
 
+const DEFAULT_TX_COUNT_FOR_RESYNC: u64 = 10;
+
 #[derive(Debug)]
 /// Middleware used for calculating nonces locally, useful for signing multiple
 /// consecutive transactions without waiting for them to hit the mempool
@@ -13,6 +15,8 @@ pub struct NonceManagerMiddleware<M> {
     init_guard: futures_locks::Mutex<()>,
     initialized: AtomicBool,
     nonce: AtomicU64,
+    txs_count_for_resync: Option<AtomicU64>,
+    txs_since_resync: AtomicU64,
     address: Address,
 }
 
@@ -28,6 +32,8 @@ where
             init_guard: Default::default(),
             initialized: Default::default(),
             nonce: Default::default(),
+            txs_count_for_resync: Default::default(),
+            txs_since_resync: 0u64.into(),
             address,
         }
     }
@@ -36,6 +42,17 @@ where
     pub fn next(&self) -> U256 {
         let nonce = self.nonce.fetch_add(1, Ordering::SeqCst);
         nonce.into()
+    }
+
+    pub fn get_tx_count_for_resync(&self) -> u64 {
+        self.txs_count_for_resync
+            .as_ref()
+            .map(|count| count.load(Ordering::SeqCst))
+            .unwrap_or(DEFAULT_TX_COUNT_FOR_RESYNC)
+    }
+
+    pub fn txs_since_resync(&self) -> u64 {
+        self.txs_since_resync.load(Ordering::SeqCst)
     }
 
     pub async fn initialize_nonce(
@@ -142,7 +159,19 @@ where
         tracing::debug!(?nonce, "Sending transaction");
         match self.inner.send_transaction(tx.clone(), block).await {
             Ok(pending_tx) => {
+                let new_txs_since_resync = self.txs_since_resync.fetch_add(1, Ordering::SeqCst);
                 tracing::debug!(?nonce, "Sent transaction");
+                let tx_count_for_resync = self.get_tx_count_for_resync();
+                if new_txs_since_resync >= tx_count_for_resync {
+                    let onchain_nonce = self.get_transaction_count(self.address, block).await?;
+                    self.nonce.store(onchain_nonce.as_u64(), Ordering::SeqCst);
+                    self.txs_since_resync.store(0, Ordering::SeqCst);
+                    tracing::debug!(?nonce, "Resynced internal nonce with onchain nonce");
+                } else {
+                    self.txs_since_resync.store(new_txs_since_resync, Ordering::SeqCst);
+                    let txs_until_resync = tx_count_for_resync - new_txs_since_resync;
+                    tracing::debug!(?txs_until_resync, "Transactions until nonce resync");
+                }
                 Ok(pending_tx)
             }
             Err(err) => {
