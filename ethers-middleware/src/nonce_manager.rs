@@ -15,7 +15,7 @@ pub struct NonceManagerMiddleware<M> {
     init_guard: futures_locks::Mutex<()>,
     initialized: AtomicBool,
     nonce: AtomicU64,
-    txs_count_for_resync: Option<AtomicU64>,
+    tx_count_for_resync: Option<AtomicU64>,
     txs_since_resync: AtomicU64,
     address: Address,
 }
@@ -32,7 +32,7 @@ where
             init_guard: Default::default(),
             initialized: Default::default(),
             nonce: Default::default(),
-            txs_count_for_resync: Default::default(),
+            tx_count_for_resync: Default::default(),
             txs_since_resync: 0u64.into(),
             address,
         }
@@ -45,7 +45,7 @@ where
     }
 
     pub fn get_tx_count_for_resync(&self) -> u64 {
-        self.txs_count_for_resync
+        self.tx_count_for_resync
             .as_ref()
             .map(|count| count.load(Ordering::SeqCst))
             .unwrap_or(DEFAULT_TX_COUNT_FOR_RESYNC)
