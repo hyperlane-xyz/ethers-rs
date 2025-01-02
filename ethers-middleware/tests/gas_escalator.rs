@@ -15,6 +15,7 @@ use instant::Duration;
 use tokio::time::sleep;
 
 #[tokio::test]
+#[tracing_test::traced_test]
 async fn gas_escalator_legacy_works() {
     // TODO: show tracing logs in the test
 
@@ -63,6 +64,7 @@ async fn gas_escalator_legacy_works() {
 }
 
 #[tokio::test]
+#[tracing_test::traced_test]
 async fn gas_escalator_1559_works() {
     // TODO: show tracing logs in the test
 
