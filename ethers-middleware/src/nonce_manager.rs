@@ -51,10 +51,6 @@ where
             .unwrap_or(DEFAULT_TX_COUNT_FOR_RESYNC)
     }
 
-    pub fn txs_since_resync(&self) -> u64 {
-        self.txs_since_resync.load(Ordering::SeqCst)
-    }
-
     pub async fn initialize_nonce(
         &self,
         block: Option<BlockId>,
