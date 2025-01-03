@@ -164,7 +164,6 @@ where
                     self.txs_since_resync.store(0, Ordering::SeqCst);
                     tracing::debug!(?nonce, "Resynced internal nonce with onchain nonce");
                 } else {
-                    self.txs_since_resync.store(new_txs_since_resync, Ordering::SeqCst);
                     let txs_until_resync = tx_count_for_resync - new_txs_since_resync;
                     tracing::debug!(?txs_until_resync, "Transactions until nonce resync");
                 }
