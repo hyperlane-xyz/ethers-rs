@@ -155,7 +155,8 @@ where
         tracing::debug!(?nonce, "Sending transaction");
         match self.inner.send_transaction(tx.clone(), block).await {
             Ok(pending_tx) => {
-                let new_txs_since_resync = self.txs_since_resync.fetch_add(1, Ordering::SeqCst);
+                let txs_since_resync = self.txs_since_resync.load(Ordering::SeqCst);
+                let new_txs_since_resync = txs_since_resync + 1;
                 tracing::debug!(?nonce, "Sent transaction");
                 let tx_count_for_resync = self.get_tx_count_for_resync();
                 if new_txs_since_resync >= tx_count_for_resync {
@@ -164,6 +165,7 @@ where
                     self.txs_since_resync.store(0, Ordering::SeqCst);
                     tracing::debug!(?nonce, "Resynced internal nonce with onchain nonce");
                 } else {
+                    self.txs_since_resync.store(new_txs_since_resync, Ordering::SeqCst);
                     let txs_until_resync = tx_count_for_resync - new_txs_since_resync;
                     tracing::debug!(?txs_until_resync, "Transactions until nonce resync");
                 }
