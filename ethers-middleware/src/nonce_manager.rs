@@ -160,7 +160,12 @@ where
                 tracing::debug!(?nonce, "Sent transaction");
                 let tx_count_for_resync = self.get_tx_count_for_resync();
                 if new_txs_since_resync >= tx_count_for_resync {
-                    let onchain_nonce = self.get_transaction_count(self.address, block).await?;
+                    // subtract 1 because the nonce returned by `get_transaction_count`
+                    // is the next one to be used, whereas we want the last one that landed
+                    let onchain_nonce = self
+                        .get_transaction_count(self.address, block)
+                        .await?
+                        .saturating_sub(1.into());
                     self.nonce.store(onchain_nonce.as_u64(), Ordering::SeqCst);
                     self.txs_since_resync.store(0, Ordering::SeqCst);
                     tracing::debug!(?nonce, "Resynced internal nonce with onchain nonce");
