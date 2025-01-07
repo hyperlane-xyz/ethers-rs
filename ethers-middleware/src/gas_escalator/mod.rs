@@ -19,7 +19,7 @@ use ethers_providers::{interval, FromErr, Middleware, PendingTransaction, Stream
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::spawn;
 
-const RANDOM_TX_DROP_TRESHOLD: u64 = 3;
+const RANDOM_TX_DROP_TRESHOLD: u64 = 4;
 
 pub type ToEscalate = Arc<Mutex<Vec<MonitoredTransaction>>>;
 
