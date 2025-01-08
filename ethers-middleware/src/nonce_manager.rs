@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use thiserror::Error;
 use tracing::instrument;
 
-const DEFAULT_TX_COUNT_FOR_RESYNC: u64 = 10;
+const DEFAULT_TX_COUNT_FOR_RESYNC: u64 = 3;
 
 #[derive(Debug)]
 /// Middleware used for calculating nonces locally, useful for signing multiple
