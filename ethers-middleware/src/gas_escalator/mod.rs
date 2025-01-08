@@ -8,7 +8,7 @@ use async_trait::async_trait;
 
 use futures_util::lock::Mutex;
 use instant::Instant;
-use std::{pin::Pin, sync::Arc};
+use std::{pin::Pin, str::FromStr, sync::Arc};
 use thiserror::Error;
 use tracing::{self, instrument};
 use tracing_futures::Instrument;
@@ -18,6 +18,8 @@ use ethers_providers::{interval, FromErr, Middleware, PendingTransaction, Stream
 
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::spawn;
+
+// const RANDOM_TX_DROP_TRESHOLD: u64 = 3;
 
 pub type ToEscalate = Arc<Mutex<Vec<MonitoredTransaction>>>;
 
@@ -57,6 +59,8 @@ pub(crate) struct GasEscalatorMiddlewareInternal<M> {
     /// The transactions which are currently being monitored for escalation
     #[allow(clippy::type_complexity)]
     pub txs: ToEscalate,
+    // need an arc-mutex for interior mutability in `send_transaction`
+    // random_tx_drop_counter: Arc<Mutex<u64>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -204,6 +208,22 @@ where
         block: Option<BlockId>,
     ) -> Result<PendingTransaction<'_, M::Provider>, GasEscalatorError<M>> {
         let tx = tx.into();
+        // let random_tx_drop_counter = {
+        //     let mut lock = self.random_tx_drop_counter.lock().await;
+        //     *lock += 1;
+        //     *lock
+        // };
+        let drop = rand::random::<bool>();
+        if drop {
+            tracing::warn!(tx = ?tx, "Dropping random transaction");
+            return Ok(PendingTransaction::new(
+                TxHash::from_str(
+                    "0xc752a789349083c1c50770cdbeb7deb078ac5186de1553ea1d3e5192e566dcde",
+                )
+                .unwrap(),
+                self.inner.provider(),
+            ));
+        }
 
         match self.inner.send_transaction(tx.clone(), block).await {
             Ok(pending_tx) => {
@@ -250,8 +270,11 @@ where
 
         let txs: ToEscalate = Default::default();
 
-        let this =
-            Arc::new(GasEscalatorMiddlewareInternal { inner: inner.clone(), txs: txs.clone() });
+        let this = Arc::new(GasEscalatorMiddlewareInternal {
+            inner: inner.clone(),
+            txs: txs.clone(),
+            // random_tx_drop_counter: Arc::new(Mutex::new(0)),
+        });
 
         let esc = EscalationTask { inner, escalator, frequency, txs };
 

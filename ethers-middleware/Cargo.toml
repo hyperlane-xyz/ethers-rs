@@ -37,13 +37,13 @@ url = { version = "2.3.1", default-features = false }
 
 serde_json = { version = "1.0.64", default-features = false }
 instant = { version = "0.1.12", features = ["now"] }
+rand = { version = "0.8.5", default-features = false }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1.18" }
 
 [dev-dependencies]
 hex = { version = "0.4.3", default-features = false, features = ["std"] }
-rand = { version = "0.8.5", default-features = false }
 ethers-providers = { version = "^1.0.0", path = "../ethers-providers", default-features = false, features = [
     "ws",
     "rustls",
