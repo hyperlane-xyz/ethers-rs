@@ -8,6 +8,9 @@ use url::Url;
 const MAINNET_URL: &str = "https://gasstation.polygon.technology/v2";
 const MUMBAI_URL: &str = "https://gasstation-testnet.polygon.technology/v2";
 
+const BASE_FEE_MULTIPLIER: f64 = 1.5;
+const PRIO_FEE_MULTIPLIER: f64 = 1.1;
+
 /// The [Polygon](https://docs.polygon.technology/docs/develop/tools/polygon-gas-station/) gas station API
 /// Queries over HTTP and implements the `GasOracle` trait
 #[derive(Clone, Debug)]
@@ -71,8 +74,9 @@ impl Response {
 impl GasOracle for Polygon {
     async fn fetch(&self) -> Result<U256, GasOracleError> {
         let response = self.query().await?;
-        let base = response.estimated_base_fee;
-        let prio = response.estimate_from_category(self.gas_category).max_priority_fee;
+        let base = response.estimated_base_fee * BASE_FEE_MULTIPLIER;
+        let prio = response.estimate_from_category(self.gas_category).max_priority_fee
+            * PRIO_FEE_MULTIPLIER;
         let fee = base + prio;
         Ok(from_gwei(fee))
     }
@@ -80,8 +84,8 @@ impl GasOracle for Polygon {
     async fn estimate_eip1559_fees(&self) -> Result<(U256, U256), GasOracleError> {
         let response = self.query().await?;
         let estimate = response.estimate_from_category(self.gas_category);
-        let max = from_gwei(estimate.max_fee);
-        let prio = from_gwei(estimate.max_priority_fee);
+        let max = from_gwei(estimate.max_fee * BASE_FEE_MULTIPLIER);
+        let prio = from_gwei(estimate.max_priority_fee * PRIO_FEE_MULTIPLIER);
         Ok((max, prio))
     }
 }
