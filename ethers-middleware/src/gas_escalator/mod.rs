@@ -270,8 +270,13 @@ pub struct EscalationTask<M, E> {
     txs: ToEscalate,
 }
 
-const RETRYABLE_ERRORS: [&str; 3] =
-    ["replacement transaction underpriced", "already known", "Fair pubdata price too high"];
+const RETRYABLE_ERRORS: [&str; 4] = [
+    "replacement transaction underpriced",
+    "already known",
+    "Fair pubdata price too high",
+    // seen on Sei
+    "insufficient fee",
+];
 
 #[cfg(not(target_arch = "wasm32"))]
 impl<M, E: Clone> EscalationTask<M, E> {
