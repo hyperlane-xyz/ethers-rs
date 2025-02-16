@@ -78,13 +78,18 @@ pub const EIP1559_FEE_ESTIMATION_PAST_BLOCKS: u64 = 10;
 /// The default percentile of gas premiums that are fetched for fee estimation.
 pub const EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE: f64 = 5.0;
 /// The default max priority fee per gas, used in case the base fee is within a threshold.
-pub const EIP1559_FEE_ESTIMATION_DEFAULT_PRIORITY_FEE: u64 = 100_000_000;
+/// changing to reflect https://github.com/alloy-rs/alloy/blob/1060b08ffc4ce5b858755dec15da34a4ccf43d0f/crates/provider/src/utils.rs#L44
+pub const EIP1559_FEE_ESTIMATION_DEFAULT_PRIORITY_FEE: u64 = 1;
 /// The threshold for base fee below which we use the default priority fee, and beyond which we
 /// estimate an appropriate value for priority fee.
 pub const EIP1559_FEE_ESTIMATION_PRIORITY_FEE_TRIGGER: u64 = 100_000_000_000;
 /// The threshold max change/difference (in %) at which we will ignore the fee history values
 /// under it.
 pub const EIP1559_FEE_ESTIMATION_THRESHOLD_MAX_CHANGE: i64 = 200;
+/// Multiplier for the current base fee to estimate max base fee for the next block.
+/// changing to reflect https://github.com/alloy-rs/alloy/blob/1060b08ffc4ce5b858755dec15da34a4ccf43d0f/crates/provider/src/utils.rs#L44
+pub const EIP1559_BASE_FEE_MULTIPLIER: u128 = 2;
+
 
 /// This enum holds the numeric types that a possible to be returned by `parse_units` and
 /// that are taken by `format_units`.
@@ -494,15 +499,19 @@ fn estimate_priority_fee(rewards: Vec<Vec<U256>>) -> U256 {
 }
 
 fn base_fee_surged(base_fee_per_gas: U256) -> U256 {
-    if base_fee_per_gas <= U256::from(40_000_000_000u64) {
-        base_fee_per_gas * 2
-    } else if base_fee_per_gas <= U256::from(100_000_000_000u64) {
-        base_fee_per_gas * 16 / 10
-    } else if base_fee_per_gas <= U256::from(200_000_000_000u64) {
-        base_fee_per_gas * 14 / 10
-    } else {
-        base_fee_per_gas * 12 / 10
-    }
+
+    // changing to reflect https://github.com/alloy-rs/alloy/blob/1060b08ffc4ce5b858755dec15da34a4ccf43d0f/crates/provider/src/utils.rs#L44
+    base_fee_per_gas * U256::from(EIP1559_BASE_FEE_MULTIPLIER)
+
+    // if base_fee_per_gas <= U256::from(40_000_000_000u64) {
+    //     base_fee_per_gas * 2
+    // } else if base_fee_per_gas <= U256::from(100_000_000_000u64) {
+    //     base_fee_per_gas * 16 / 10
+    // } else if base_fee_per_gas <= U256::from(200_000_000_000u64) {
+    //     base_fee_per_gas * 14 / 10
+    // } else {
+    //     base_fee_per_gas * 12 / 10
+    // }
 }
 
 /// A bit of hack to find an unused TCP port.
@@ -954,13 +963,11 @@ mod tests {
 
     #[test]
     fn test_eip1559_default_estimator() {
-        // If the base fee is below the triggering base fee, we should get the default priority fee
-        // with the base fee surged.
-        let base_fee_per_gas = U256::from(EIP1559_FEE_ESTIMATION_PRIORITY_FEE_TRIGGER) - 1;
-        let rewards: Vec<Vec<U256>> = vec![vec![]];
-        let (base_fee, priority_fee) = eip1559_default_estimator(base_fee_per_gas, rewards);
+        // if estimate_priority_fee returns 0, we should return the default priority fee
+        let rewards: Vec<Vec<U256>> = vec![vec![U256::zero()]];
+        let (base_fee, priority_fee) = eip1559_default_estimator(U256::zero(), rewards);
+        assert_eq!(base_fee, U256::from(EIP1559_FEE_ESTIMATION_DEFAULT_PRIORITY_FEE));
         assert_eq!(priority_fee, U256::from(EIP1559_FEE_ESTIMATION_DEFAULT_PRIORITY_FEE));
-        assert_eq!(base_fee, base_fee_surged(base_fee_per_gas));
 
         // If the base fee is above the triggering base fee, we calculate the priority fee using
         // the fee history (rewards).
