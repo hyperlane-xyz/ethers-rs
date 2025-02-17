@@ -89,6 +89,8 @@ pub const EIP1559_FEE_ESTIMATION_THRESHOLD_MAX_CHANGE: i64 = 200;
 /// Multiplier for the current base fee to estimate max base fee for the next block.
 /// changing to reflect https://github.com/alloy-rs/alloy/blob/1060b08ffc4ce5b858755dec15da34a4ccf43d0f/crates/provider/src/utils.rs#L44
 pub const EIP1559_BASE_FEE_MULTIPLIER: u128 = 2;
+/// buffer of 20% for the priority fee
+pub const EIP1559_PRIORITY_FEE_MULTIPLIER: u128 = 120;
 
 
 /// This enum holds the numeric types that a possible to be returned by `parse_units` and
@@ -437,7 +439,10 @@ pub fn parse_bytes32_string(bytes: &[u8; 32]) -> Result<&str, ConversionError> {
     Ok(std::str::from_utf8(&bytes[..length])?)
 }
 
-/// The default EIP-1559 fee estimator which is based on the work by [MyCrypto](https://github.com/MyCryptoHQ/MyCrypto/blob/master/src/services/ApiService/Gas/eip1559.ts)
+/// The default EIP-1559 fee estimator.
+///
+/// Based on the work by [MetaMask](https://github.com/MetaMask/core/blob/main/packages/gas-fee-controller/src/fetchGasEstimatesViaEthFeeHistory/calculateGasFeeEstimatesForPriorityLevels.ts#L56);
+/// constants for "medium" priority level are used.
 pub fn eip1559_default_estimator(base_fee_per_gas: U256, rewards: Vec<Vec<U256>>) -> (U256, U256) {
     let max_priority_fee_per_gas = std::cmp::max(
         estimate_priority_fee(rewards),
@@ -458,41 +463,12 @@ fn estimate_priority_fee(rewards: Vec<Vec<U256>>) -> U256 {
     if rewards.len() == 1 {
         return rewards[0]
     }
-    // Sort the rewards as we will eventually take the median.
-    rewards.sort();
+    rewards.sort_unstable();
+    let n = rewards.len();
+    let median =
+        if n % 2 == 0 { (rewards[n / 2 - 1] + rewards[n / 2]) / 2 } else { rewards[n / 2] };
 
-    // A copy of the same vector is created for convenience to calculate percentage change
-    // between subsequent fee values.
-    let mut rewards_copy = rewards.clone();
-    rewards_copy.rotate_left(1);
-
-    let mut percentage_change: Vec<I256> = rewards
-        .iter()
-        .zip(rewards_copy.iter())
-        .map(|(a, b)| {
-            let a = I256::try_from(*a).expect("priority fee overflow");
-            let b = I256::try_from(*b).expect("priority fee overflow");
-            ((b - a) * 100.into()) / a
-        })
-        .collect();
-    percentage_change.pop();
-
-    // Fetch the max of the percentage change, and that element's index.
-    let max_change = percentage_change.iter().max().unwrap();
-    let max_change_index = percentage_change.iter().position(|&c| c == *max_change).unwrap();
-
-    // If we encountered a big change in fees at a certain position, then consider only
-    // the values >= it.
-    let values = if *max_change >= EIP1559_FEE_ESTIMATION_THRESHOLD_MAX_CHANGE.into() &&
-        (max_change_index >= (rewards.len() / 2))
-    {
-        rewards[max_change_index..].to_vec()
-    } else {
-        rewards
-    };
-
-    // Return the median.
-    values[values.len() / 2]
+    median * U256::from(EIP1559_PRIORITY_FEE_MULTIPLIER) / U256::from(100)
 }
 
 fn base_fee_surged(base_fee_per_gas: U256) -> U256 {
@@ -969,12 +945,12 @@ mod tests {
         assert_eq!(priority_fee, estimate_priority_fee(rewards.clone()));
 
         // The median should be taken because none of the changes are big enough to ignore values.
-        assert_eq!(estimate_priority_fee(rewards), 102_000_000_000u64.into());
+        assert_eq!(estimate_priority_fee(rewards), 122_400_000_000u64.into());
 
         // Ensure fee estimation doesn't panic when overflowing a u32. This had been a divide by
         // zero.
         let overflow = U256::from(u32::MAX) + 1;
         let rewards_overflow: Vec<Vec<U256>> = vec![vec![overflow], vec![overflow]];
-        assert_eq!(estimate_priority_fee(rewards_overflow), overflow);
+        assert_eq!(estimate_priority_fee(rewards_overflow), overflow * U256::from(EIP1559_PRIORITY_FEE_MULTIPLIER) / U256::from(100));
     }
 }
