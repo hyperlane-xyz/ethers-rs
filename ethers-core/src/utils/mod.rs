@@ -964,7 +964,8 @@ mod tests {
             vec![102_000_000_000u64.into()],
         ]; // say, last 3 blocks
         let (base_fee, priority_fee) = eip1559_default_estimator(base_fee_per_gas, rewards.clone());
-        assert_eq!(base_fee, base_fee_surged(base_fee_per_gas));
+        let expected_max_fee = base_fee_surged(base_fee_per_gas) + estimate_priority_fee(rewards.clone());   
+        assert_eq!(base_fee, expected_max_fee);
         assert_eq!(priority_fee, estimate_priority_fee(rewards.clone()));
 
         // The median should be taken because none of the changes are big enough to ignore values.
