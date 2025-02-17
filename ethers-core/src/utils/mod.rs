@@ -444,11 +444,8 @@ pub fn eip1559_default_estimator(base_fee_per_gas: U256, rewards: Vec<Vec<U256>>
         U256::from(EIP1559_FEE_ESTIMATION_DEFAULT_PRIORITY_FEE),
     );
     let potential_max_fee = base_fee_surged(base_fee_per_gas);
-    let max_fee_per_gas = if max_priority_fee_per_gas > potential_max_fee {
-        max_priority_fee_per_gas + potential_max_fee
-    } else {
-        potential_max_fee
-    };
+    let max_fee_per_gas = max_priority_fee_per_gas + potential_max_fee;
+
     (max_fee_per_gas, max_priority_fee_per_gas)
 }
 
@@ -499,19 +496,8 @@ fn estimate_priority_fee(rewards: Vec<Vec<U256>>) -> U256 {
 }
 
 fn base_fee_surged(base_fee_per_gas: U256) -> U256 {
-
     // changing to reflect https://github.com/alloy-rs/alloy/blob/1060b08ffc4ce5b858755dec15da34a4ccf43d0f/crates/provider/src/utils.rs#L44
     base_fee_per_gas * U256::from(EIP1559_BASE_FEE_MULTIPLIER)
-
-    // if base_fee_per_gas <= U256::from(40_000_000_000u64) {
-    //     base_fee_per_gas * 2
-    // } else if base_fee_per_gas <= U256::from(100_000_000_000u64) {
-    //     base_fee_per_gas * 16 / 10
-    // } else if base_fee_per_gas <= U256::from(200_000_000_000u64) {
-    //     base_fee_per_gas * 14 / 10
-    // } else {
-    //     base_fee_per_gas * 12 / 10
-    // }
 }
 
 /// A bit of hack to find an unused TCP port.
