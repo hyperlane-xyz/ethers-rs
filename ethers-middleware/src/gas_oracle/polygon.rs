@@ -75,8 +75,8 @@ impl GasOracle for Polygon {
     async fn fetch(&self) -> Result<U256, GasOracleError> {
         let response = self.query().await?;
         let base = response.estimated_base_fee * BASE_FEE_MULTIPLIER;
-        let prio = response.estimate_from_category(self.gas_category).max_priority_fee
-            * PRIO_FEE_MULTIPLIER;
+        let prio = response.estimate_from_category(self.gas_category).max_priority_fee *
+            PRIO_FEE_MULTIPLIER;
         let fee = base + prio;
         Ok(from_gwei(fee))
     }

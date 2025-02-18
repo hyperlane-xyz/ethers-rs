@@ -286,7 +286,8 @@ impl<M, E: Clone> EscalationTask<M, E> {
 
     /// Handles errors from broadcasting a gas-escalated transaction
     ///
-    /// **Returns** `None`, if the transaction is to be dropped from the escalator, `Some` to keep monitoring and escalating it
+    /// **Returns** `None`, if the transaction is to be dropped from the escalator, `Some` to keep
+    /// monitoring and escalating it
     fn handle_broadcast_error(
         err_message: String,
         old_monitored_tx: MonitoredTransaction,
