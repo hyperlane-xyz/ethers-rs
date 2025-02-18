@@ -1,5 +1,7 @@
-use crate::{types::U256, utils::from_int_or_hex};
-use serde::{Deserialize, Serialize};
+use std::str::FromStr;
+
+use crate::types::U256;
+use serde::{de::Deserializer, Deserialize, Serialize};
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -16,4 +18,20 @@ pub struct FeeHistory {
     /// zeroes are returned if the block is empty.
     #[serde(default)]
     pub reward: Vec<Vec<U256>>,
+}
+
+fn from_int_or_hex<'de, D>(deserializer: D) -> Result<U256, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum IntOrHex {
+        Int(u64),
+        Hex(String),
+    }
+    match IntOrHex::deserialize(deserializer)? {
+        IntOrHex::Int(n) => Ok(U256::from(n)),
+        IntOrHex::Hex(s) => U256::from_str(s.as_str()).map_err(serde::de::Error::custom),
+    }
 }

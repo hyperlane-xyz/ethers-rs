@@ -31,7 +31,7 @@ mod multicall;
 #[cfg(any(test, feature = "abigen"))]
 #[cfg_attr(docsrs, doc(cfg(feature = "abigen")))]
 pub use multicall::{
-    multicall_contract, Call, Multicall, MulticallContract, MulticallError, MulticallVersion,
+    Multicall, MulticallContract, MulticallError, MulticallResult, MulticallVersion,
     MULTICALL_ADDRESS, MULTICALL_SUPPORTED_CHAIN_IDS,
 };
 
