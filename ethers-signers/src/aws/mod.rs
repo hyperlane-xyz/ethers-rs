@@ -215,7 +215,6 @@ impl AwsSigner {
         let mut sig =
             utils::sig_from_digest_bytes_trial_recovery(&sig, digest.into(), &self.pubkey);
 
-        let mut sig = rsig_to_ethsig(&sig);
         apply_eip155(&mut sig, chain_id);
         Ok(sig)
     }
@@ -257,7 +256,6 @@ impl super::Signer for AwsSigner {
 
         let sig = self.sign_digest(digest).await?;
         let sig = utils::sig_from_digest_bytes_trial_recovery(&sig, digest.into(), &self.pubkey);
-        let sig = rsig_to_ethsig(&sig);
 
         Ok(sig)
     }
