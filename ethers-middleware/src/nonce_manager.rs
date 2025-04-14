@@ -192,7 +192,10 @@ where
                 if onchain_nonce_u64 != last_used_nonce {
                     self.nonce.store(onchain_nonce.as_u64(), Ordering::SeqCst);
                     // the nonce was just resynced so this counter can be reset
-                    tracing::debug!(?nonce, "Resynced internal nonce with onchain nonce");
+                    tracing::debug!(
+                        nonce=?onchain_nonce_u64,
+                        "Resynced internal nonce with onchain nonce"
+                    );
                     self.txs_since_resync.store(0, Ordering::SeqCst);
                     // call `nonce.next()` to increment the internal nonce after it's read
                     let tx_nonce = self.next();
