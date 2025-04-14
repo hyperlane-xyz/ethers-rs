@@ -178,17 +178,31 @@ where
                     "Error sending transaction. Checking onchain nonce."
                 );
                 let onchain_nonce = self.get_transaction_count(self.address, block).await?;
+                let onchain_nonce_u64 = onchain_nonce.as_u64();
                 let internal_nonce = self.nonce.load(Ordering::SeqCst);
-                if onchain_nonce != internal_nonce.into() {
-                    // try re-submitting the transaction with the correct nonce if there
-                    // was a nonce mismatch
+                // a tx was just sent and an error was returned.
+                // for this tx to land, it needs to have used `onchain_nonce`
+                // but since the internal nonce is incremented by 1 after its value is read,
+                // the nonce used to broadcast the tx was `internal_nonce - 1`.
+                // so we need to check if the onchain nonce is equal to the last used nonce.
+                let last_used_nonce = internal_nonce.saturating_sub(1);
+                // we're using `last_used_nonce` instead of `tx.nonce()`  because the use of atomics
+                // in the NonceManager suggests it could be used to send txs in parallel,
+                // so tx.nonce() may not be the last used nonce
+                if onchain_nonce_u64 != last_used_nonce {
                     self.nonce.store(onchain_nonce.as_u64(), Ordering::SeqCst);
-                    tx.set_nonce(onchain_nonce);
+                    // the nonce was just resynced so this counter can be reset
+                    tracing::debug!(?nonce, "Resynced internal nonce with onchain nonce");
+                    self.txs_since_resync.store(0, Ordering::SeqCst);
+                    // call `nonce.next()` to increment the internal nonce after it's read
+                    let tx_nonce = self.next();
+                    tx.set_nonce(tx_nonce);
+
                     tracing::warn!(
-                        onchain_nonce=?onchain_nonce.as_u64(),
-                        ?internal_nonce,
+                        onchain_nonce=?onchain_nonce_u64,
+                        ?last_used_nonce,
                         error=?err,
-                        "Onchain nonce didn't match internal nonce. Resending transaction with updated nonce."
+                        "Onchain nonce didn't match last used nonce. Resending transaction with updated nonce."
                     );
                     self.inner
                         .send_transaction(tx, block)
