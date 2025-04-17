@@ -1,4 +1,7 @@
+mod estimate_fee;
+
 mod geometric;
+use estimate_fee::estimate_eip1559_fees_default;
 pub use geometric::GeometricGasPrice;
 
 mod linear;
@@ -13,7 +16,12 @@ use thiserror::Error;
 use tracing::{self, instrument};
 use tracing_futures::Instrument;
 
-use ethers_core::types::{transaction::eip2718::TypedTransaction, BlockId, TxHash, H256, U256};
+use ethers_core::{
+    types::{
+        transaction::eip2718::TypedTransaction, Block, BlockId, BlockNumber, TxHash, H256, U256,
+    },
+    utils::parse_units,
+};
 use ethers_providers::{interval, FromErr, Middleware, PendingTransaction, StreamExt};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -25,6 +33,9 @@ pub type ToEscalate = Arc<Mutex<Vec<MonitoredTransaction>>>;
 type WatcherFuture<'a> = Pin<Box<dyn futures_util::stream::Stream<Item = ()> + 'a>>;
 #[cfg(not(target_arch = "wasm32"))]
 type WatcherFuture<'a> = Pin<Box<dyn futures_util::stream::Stream<Item = ()> + Send + 'a>>;
+
+const GAS_PRICE_MULTIPLIER_NUMERATOR: u64 = 110;
+const GAS_PRICE_MULTIPLIER_DENOMINATOR: u64 = 100;
 
 /// Trait for fetching updated gas prices after a transaction has been first
 /// broadcast
@@ -68,7 +79,12 @@ pub struct MonitoredTransaction {
 }
 
 impl MonitoredTransaction {
-    fn escalate_gas_price<E: GasEscalator>(&self, escalator: E) -> Option<TypedTransaction> {
+    async fn escalate_gas_price<E: GasEscalator, M: Middleware>(
+        &self,
+        escalator: E,
+        provider: &M,
+        latest_block: Option<Block<TxHash>>,
+    ) -> Option<TypedTransaction> {
         // Get the new gas price based on how much time passed since the
         // tx was last broadcast
         let time_elapsed = self.creation_time.elapsed().as_secs();
@@ -77,7 +93,17 @@ impl MonitoredTransaction {
                 let Some(gas_price) = tx.gas_price else {
                     return None;
                 };
-                let new_gas_price = escalator.get_gas_price(gas_price, time_elapsed);
+                // read current gas price from the provider
+                // and multiply it by 1.1 to have some safety margin
+                let current_network_gas_price =
+                    mulitply_gas_price(provider.get_gas_price().await.unwrap_or_default());
+                let escalated_gas_price = escalator.get_gas_price(gas_price, time_elapsed);
+                tracing::debug!(
+                    escalated_gas_price = ?escalated_gas_price,
+                    current_network_gas_price = ?current_network_gas_price,
+                    "comparing escalated gas price with current network gas price"
+                );
+                let new_gas_price = escalated_gas_price.max(current_network_gas_price);
                 let mut updated_tx = tx.clone();
                 updated_tx.gas_price = Some(new_gas_price);
                 Some(updated_tx.into())
@@ -98,9 +124,42 @@ impl MonitoredTransaction {
                 let Some(max_priority_fee_per_gas) = tx.max_priority_fee_per_gas else {
                     return None;
                 };
-                let new_max_fee_per_gas = escalator.get_gas_price(max_fee_per_gas, time_elapsed);
-                let new_max_priority_fee_per_gas =
+
+                let base_fee_per_gas =
+                    match latest_block.map(|block| block.base_fee_per_gas).flatten() {
+                        Some(base_fee_per_gas) => base_fee_per_gas,
+                        None => {
+                            tracing::warn!(
+                                "No base fee per gas found in latest block, defaulting to 50 gwei"
+                            );
+                            parse_units(50, 9).unwrap().into()
+                        }
+                    };
+                // read current gas price from the provider
+                // and multiply it by 1.1 to have some safety margin
+                let (_, current_max_fee_per_gas, current_max_priority_fee_per_gas) =
+                    estimate_eip1559_fees_default(provider, base_fee_per_gas)
+                        .await
+                        .unwrap_or_default();
+                let (multiplied_max_fee_per_gas, multiplied_max_priority_fee_per_gas) = (
+                    mulitply_gas_price(current_max_fee_per_gas),
+                    mulitply_gas_price(current_max_priority_fee_per_gas),
+                );
+                let escalated_max_fee_per_gas =
+                    escalator.get_gas_price(max_fee_per_gas, time_elapsed);
+                let escalated_max_priority_fee_per_gas =
                     escalator.get_gas_price(max_priority_fee_per_gas, time_elapsed);
+                let new_max_fee_per_gas = escalated_max_fee_per_gas.max(multiplied_max_fee_per_gas);
+                let new_max_priority_fee_per_gas =
+                    escalated_max_priority_fee_per_gas.max(multiplied_max_priority_fee_per_gas);
+
+                tracing::debug!(
+                    escalated_max_fee_per_gas = ?escalated_max_fee_per_gas,
+                    escalated_max_priority_fee_per_gas = ?escalated_max_priority_fee_per_gas,
+                    multiplied_max_fee_per_gas = ?multiplied_max_fee_per_gas,
+                    multiplied_max_priority_fee_per_gas = ?multiplied_max_priority_fee_per_gas,
+                    "comparing escalated gas price with current network gas price"
+                );
                 let mut updated_tx = tx.clone();
                 updated_tx.max_fee_per_gas = Some(new_max_fee_per_gas);
                 updated_tx.max_priority_fee_per_gas = Some(new_max_priority_fee_per_gas);
@@ -108,6 +167,12 @@ impl MonitoredTransaction {
             }
         }
     }
+}
+
+fn mulitply_gas_price(gas_price: U256) -> U256 {
+    let numerator = U256::from(GAS_PRICE_MULTIPLIER_NUMERATOR);
+    let denominator = U256::from(GAS_PRICE_MULTIPLIER_DENOMINATOR);
+    gas_price * numerator / denominator
 }
 
 /// A Gas escalator allows bumping transactions' gas price to avoid getting them
@@ -366,6 +431,8 @@ impl<M, E: Clone> EscalationTask<M, E> {
             tracing::trace!(?monitored_txs, "In the escalator watcher loop. Monitoring txs");
         }
         let mut new_txs_to_monitor = vec![];
+        let maybe_latest_block =
+            self.inner.get_block(BlockId::Number(BlockNumber::Latest)).await.ok().flatten();
         for old_monitored_tx in monitored_txs {
             let receipt = if let Some(tx_hash) = old_monitored_tx.hash {
                 tracing::trace!(tx_hash = ?old_monitored_tx.hash, "checking if exists");
@@ -382,7 +449,10 @@ impl<M, E: Clone> EscalationTask<M, E> {
                 tracing::debug!(tx = ?receipt.transaction_hash, "Transaction was included onchain, dropping from escalator");
                 continue;
             }
-            let Some(new_tx) = old_monitored_tx.escalate_gas_price(self.escalator.clone()) else {
+            let Some(new_tx) = old_monitored_tx
+                .escalate_gas_price(self.escalator.clone(), &self.inner, maybe_latest_block.clone())
+                .await
+            else {
                 tracing::error!(tx=?old_monitored_tx.hash, "gas price is not set for transaction, dropping from escalator");
                 continue;
             };

@@ -1392,6 +1392,7 @@ dependencies = [
  "ethers-providers",
  "ethers-signers",
  "ethers-solc",
+ "eyre",
  "futures-locks",
  "futures-util",
  "hex",
