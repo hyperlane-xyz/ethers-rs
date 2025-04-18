@@ -25,7 +25,6 @@ where
         .await
         .map_err(|e| eyre::eyre!("Failed to fetch fee history: {}", e))?;
 
-    // use the provided fee estimator function, or fallback to the default implementation.
     let (max_fee_per_gas, max_priority_fee_per_gas) =
         eip1559_default_estimator(base_fee_per_gas, fee_history.reward);
 
