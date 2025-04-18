@@ -431,8 +431,7 @@ impl<M, E: Clone> EscalationTask<M, E> {
             tracing::trace!(?monitored_txs, "In the escalator watcher loop. Monitoring txs");
         }
         let mut new_txs_to_monitor = vec![];
-        let maybe_latest_block =
-            self.inner.get_block(BlockId::Number(BlockNumber::Latest)).await.ok().flatten();
+        let maybe_latest_block = self.inner.get_block(BlockNumber::Latest).await.ok().flatten();
         for old_monitored_tx in monitored_txs {
             let receipt = if let Some(tx_hash) = old_monitored_tx.hash {
                 tracing::trace!(tx_hash = ?old_monitored_tx.hash, "checking if exists");
