@@ -15,7 +15,6 @@ use serde::de::DeserializeOwned;
 use tiny_keccak::{Hasher, Keccak};
 use walkdir::WalkDir;
 
-
 /// A regex that matches the import path and identifier of a solidity import
 /// statement with the named groups "path", "id".
 // Adapted from <https://github.com/nomiclabs/hardhat/blob/cced766c65b25d3d0beb39ef847246ac9618bdd9/packages/hardhat-core/src/internal/solidity/parse.ts#L100>
@@ -206,7 +205,7 @@ pub fn resolve_library(libs: &[impl AsRef<Path>], source: impl AsRef<Path>) -> O
                 let contract = lib.join(source);
                 if contract.exists() {
                     // contract exists in <lib>/<source>
-                    return Some(contract)
+                    return Some(contract);
                 }
                 // check for <lib>/<first_dir>/src/name.sol
                 let contract = lib
@@ -214,7 +213,7 @@ pub fn resolve_library(libs: &[impl AsRef<Path>], source: impl AsRef<Path>) -> O
                     .join("src")
                     .join(source.strip_prefix(first_dir).expect("is first component"));
                 if contract.exists() {
-                    return Some(contract)
+                    return Some(contract);
                 }
             }
             None
@@ -248,7 +247,7 @@ pub fn resolve_absolute_library(
     let mut parent = cwd.parent()?;
     while parent != root {
         if let Ok(import) = canonicalize(parent.join(import)) {
-            return Some((parent.to_path_buf(), import))
+            return Some((parent.to_path_buf(), import));
         }
         parent = parent.parent()?;
     }
@@ -329,7 +328,7 @@ where
         if let Some(r) = common_ancestor(ret, path.as_ref()) {
             ret = r;
         } else {
-            return None
+            return None;
         }
     }
     Some(ret)
@@ -360,7 +359,7 @@ pub fn common_ancestor(a: impl AsRef<Path>, b: impl AsRef<Path>) -> Option<PathB
             ret.push(c1);
             found = true;
         } else {
-            break
+            break;
         }
     }
     if found {
@@ -380,7 +379,7 @@ pub(crate) fn find_fave_or_alt_path(root: impl AsRef<Path>, fave: &str, alt: &st
     if !p.exists() {
         let alt = root.join(alt);
         if alt.exists() {
-            return alt
+            return alt;
         }
     }
     p
