@@ -8,12 +8,9 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fs,
     io::Write,
-    path::{Path, PathBuf},
+    path::Path,
 };
 use toml::Value;
-
-/// The default ethers dependency to generate.
-const DEFAULT_ETHERS_DEP: &str = "ethers = { git = \"https://github.com/gakonst/ethers-rs\", default-features = false, features = [\"abigen\"] }";
 
 /// Collects Abigen structs for a series of contracts, pending generation of
 /// the contract bindings.
@@ -214,17 +211,12 @@ impl MultiExpansion {
             }
         }
 
-        MultiExpansionResult { root: None, contracts: expansions, dirty_contracts, shared_types }
+        MultiExpansionResult { contracts: expansions, dirty_contracts, shared_types }
     }
 }
 
 /// Represents an intermediary result of [`MultiExpansion::expand()`]
 pub struct MultiExpansionResult {
-    /// The root dir at which this should be executed.
-    ///
-    /// This is used to check if there's an existing `Cargo.toml`, from which we can derive the
-    /// proper `ethers` dependencies.
-    root: Option<PathBuf>,
     contracts: Vec<(ExpandedContract, Context)>,
     /// contains the indices of contracts with structs that need to be updated
     dirty_contracts: HashSet<usize>,
@@ -259,14 +251,6 @@ impl MultiExpansionResult {
         tokens
     }
 
-    /// Sets the directory from which this type should expand from.
-    ///
-    /// This is used to try to find the proper `ethers` dependency if the `root` is an existing
-    /// workspace. By default, the cwd is assumed to be the `root`.
-    pub fn set_root(&mut self, root: impl Into<PathBuf>) {
-        self.root = Some(root.into());
-    }
-
     /// Sets the path to the shared types module according to the value of `single_file`
     ///
     /// If `single_file` then it's expected that types will be written to `shared_types.rs`
@@ -294,7 +278,7 @@ impl MultiExpansionResult {
     /// Converts this result into [`MultiBindingsInner`]
     fn into_bindings(mut self, single_file: bool, rustfmt: bool) -> MultiBindingsInner {
         self.set_shared_import_path(single_file);
-        let Self { contracts, shared_types, root, .. } = self;
+        let Self { contracts, shared_types, .. } = self;
         let bindings = contracts
             .into_iter()
             .map(|(expanded, ctx)| ContractBindings {
@@ -326,7 +310,7 @@ impl MultiExpansionResult {
             None
         };
 
-        MultiBindingsInner { root, bindings, shared_types }
+        MultiBindingsInner { bindings, shared_types }
     }
 }
 
@@ -548,11 +532,6 @@ impl MultiBindings {
 }
 
 struct MultiBindingsInner {
-    /// The root dir at which this should be executed.
-    ///
-    /// This is used to check if there's an existing `Cargo.toml`, from which we can derive the
-    /// proper `ethers` dependencies.
-    root: Option<PathBuf>,
     /// Abigen objects to be written
     bindings: BTreeMap<String, ContractBindings>,
     /// contains the content of the shared types if any
@@ -590,24 +569,16 @@ impl MultiBindingsInner {
         Ok(toml)
     }
 
-    /// Returns the ethers crate version to use.
-    ///
-    /// If we fail to detect a matching `ethers` dependency, this returns the [`DEFAULT_ETHERS_DEP`]
-    /// version.
-    fn crate_version(&self) -> String {
-        self.try_find_crate_version().unwrap_or_else(|_| DEFAULT_ETHERS_DEP.to_string())
-    }
+    /// parses the active Cargo.toml to get what version of ethers we are using
+    fn find_crate_version(&self) -> Result<String> {
+        let cargo_toml = std::env::current_dir()?.join("Cargo.toml");
 
-    /// parses the active Cargo.toml to get what version of ethers we are using.
-    ///
-    /// Fails if the existing `Cargo.toml` does not contain a valid ethers dependency
-    fn try_find_crate_version(&self) -> Result<String> {
-        let cargo_toml =
-            if let Some(root) = self.root.clone() { root } else { std::env::current_dir()? }
-                .join("Cargo.toml");
+        let default_dep = || {
+            "ethers = {{ git = \"https://github.com/gakonst/ethers-rs\", default-features = false, features = [\"abigen\"] }}".to_string()
+        };
 
         if !cargo_toml.exists() {
-            return Ok(DEFAULT_ETHERS_DEP.to_string())
+            return Ok(default_dep())
         }
 
         let data = fs::read_to_string(cargo_toml)?;
@@ -626,7 +597,7 @@ impl MultiBindingsInner {
                 version
             ))
         } else {
-            Ok(DEFAULT_ETHERS_DEP.to_string())
+            Ok(default_dep())
         }
     }
 
@@ -637,7 +608,7 @@ impl MultiBindingsInner {
         name: impl AsRef<str>,
         version: impl AsRef<str>,
     ) -> Result<()> {
-        let crate_version = self.crate_version();
+        let crate_version = self.find_crate_version()?;
         let contents = self.generate_cargo_toml(name, version, crate_version)?;
 
         let mut file = fs::OpenOptions::new()
@@ -775,7 +746,7 @@ impl MultiBindingsInner {
 
         if check_cargo_toml {
             // additionally check the contents of the cargo
-            let crate_version = self.crate_version();
+            let crate_version = self.find_crate_version()?;
             let cargo_contents = self.generate_cargo_toml(name, version, crate_version)?;
             check_file_in_dir(crate_path, "Cargo.toml", &cargo_contents)?;
         }
@@ -896,18 +867,6 @@ mod tests {
                 .unwrap()
                 .ensure_consistent_module(mod_root, single_file)
                 .expect("Inconsistent bindings");
-        })
-    }
-
-    #[test]
-    fn can_find_ethers_dep() {
-        run_test(|context| {
-            let Context { multi_gen, mod_root } = context;
-
-            let single_file = true;
-            let mut inner = multi_gen.clone().build().unwrap().into_inner(single_file);
-            inner.root = Some(PathBuf::from("this does not exist"));
-            inner.write_to_module(mod_root, single_file).unwrap();
         })
     }
 
