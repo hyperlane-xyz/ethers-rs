@@ -90,8 +90,6 @@ impl MonitoredTransaction {
                 let Some(gas_price) = tx.gas_price else {
                     return None;
                 };
-                // read current gas price from the provider
-                // and multiply it by 1.1 to have some safety margin
                 let current_network_gas_price = provider.get_gas_price().await.unwrap_or_default();
                 let escalated_gas_price = escalator.get_gas_price(gas_price, time_elapsed);
                 tracing::debug!(
@@ -131,8 +129,6 @@ impl MonitoredTransaction {
                             parse_units(50, 9).unwrap().into()
                         }
                     };
-                // read current gas price from the provider
-                // and multiply it by 1.1 to have some safety margin
                 let (_, network_max_fee_per_gas, network_max_priority_fee_per_gas) =
                     estimate_eip1559_fees_default(provider, base_fee_per_gas)
                         .await
