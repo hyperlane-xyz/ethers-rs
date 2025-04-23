@@ -34,9 +34,6 @@ type WatcherFuture<'a> = Pin<Box<dyn futures_util::stream::Stream<Item = ()> + '
 #[cfg(not(target_arch = "wasm32"))]
 type WatcherFuture<'a> = Pin<Box<dyn futures_util::stream::Stream<Item = ()> + Send + 'a>>;
 
-const GAS_PRICE_MULTIPLIER_NUMERATOR: u64 = 110;
-const GAS_PRICE_MULTIPLIER_DENOMINATOR: u64 = 100;
-
 /// Trait for fetching updated gas prices after a transaction has been first
 /// broadcast
 pub trait GasEscalator: Send + Sync + std::fmt::Debug {
@@ -95,8 +92,7 @@ impl MonitoredTransaction {
                 };
                 // read current gas price from the provider
                 // and multiply it by 1.1 to have some safety margin
-                let current_network_gas_price =
-                    mulitply_gas_price(provider.get_gas_price().await.unwrap_or_default());
+                let current_network_gas_price = provider.get_gas_price().await.unwrap_or_default();
                 let escalated_gas_price = escalator.get_gas_price(gas_price, time_elapsed);
                 tracing::debug!(
                     escalated_gas_price = ?escalated_gas_price,
@@ -137,27 +133,24 @@ impl MonitoredTransaction {
                     };
                 // read current gas price from the provider
                 // and multiply it by 1.1 to have some safety margin
-                let (_, current_max_fee_per_gas, current_max_priority_fee_per_gas) =
+                let (_, network_max_fee_per_gas, network_max_priority_fee_per_gas) =
                     estimate_eip1559_fees_default(provider, base_fee_per_gas)
                         .await
                         .unwrap_or_default();
-                let (multiplied_max_fee_per_gas, multiplied_max_priority_fee_per_gas) = (
-                    mulitply_gas_price(current_max_fee_per_gas),
-                    mulitply_gas_price(current_max_priority_fee_per_gas),
-                );
+
                 let escalated_max_fee_per_gas =
                     escalator.get_gas_price(max_fee_per_gas, time_elapsed);
                 let escalated_max_priority_fee_per_gas =
                     escalator.get_gas_price(max_priority_fee_per_gas, time_elapsed);
-                let new_max_fee_per_gas = escalated_max_fee_per_gas.max(multiplied_max_fee_per_gas);
+                let new_max_fee_per_gas = escalated_max_fee_per_gas.max(network_max_fee_per_gas);
                 let new_max_priority_fee_per_gas =
-                    escalated_max_priority_fee_per_gas.max(multiplied_max_priority_fee_per_gas);
+                    escalated_max_priority_fee_per_gas.max(network_max_priority_fee_per_gas);
 
                 tracing::debug!(
                     escalated_max_fee_per_gas = ?escalated_max_fee_per_gas,
                     escalated_max_priority_fee_per_gas = ?escalated_max_priority_fee_per_gas,
-                    multiplied_max_fee_per_gas = ?multiplied_max_fee_per_gas,
-                    multiplied_max_priority_fee_per_gas = ?multiplied_max_priority_fee_per_gas,
+                    network_max_fee_per_gas = ?network_max_fee_per_gas,
+                    network_max_priority_fee_per_gas = ?network_max_priority_fee_per_gas,
                     "comparing escalated gas price with current network gas price"
                 );
                 let mut updated_tx = tx.clone();
@@ -167,12 +160,6 @@ impl MonitoredTransaction {
             }
         }
     }
-}
-
-fn mulitply_gas_price(gas_price: U256) -> U256 {
-    let numerator = U256::from(GAS_PRICE_MULTIPLIER_NUMERATOR);
-    let denominator = U256::from(GAS_PRICE_MULTIPLIER_DENOMINATOR);
-    gas_price * numerator / denominator
 }
 
 /// A Gas escalator allows bumping transactions' gas price to avoid getting them
