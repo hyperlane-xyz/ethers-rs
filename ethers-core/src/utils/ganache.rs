@@ -2,6 +2,7 @@ use crate::{
     types::Address,
     utils::{secret_key_to_address, unused_port},
 };
+use generic_array::GenericArray;
 use k256::{ecdsa::SigningKey, SecretKey as K256SecretKey};
 use std::{
     io::{BufRead, BufReader},
@@ -195,7 +196,7 @@ impl Ganache {
             let mut line = String::new();
             reader.read_line(&mut line).expect("Failed to read line from ganache process");
             if line.contains("Listening on") {
-                break
+                break;
             }
 
             if line.starts_with("Private Keys") {
@@ -205,7 +206,8 @@ impl Ganache {
             if is_private_key && line.starts_with('(') {
                 let key_str = &line[6..line.len() - 1];
                 let key_hex = hex::decode(key_str).expect("could not parse as hex");
-                let key = K256SecretKey::from_be_bytes(&key_hex).expect("did not get private key");
+                let key = K256SecretKey::from_bytes(&GenericArray::clone_from_slice(&key_hex))
+                    .expect("did not get private key");
                 addresses.push(secret_key_to_address(&SigningKey::from(&key)));
                 private_keys.push(key);
             }
