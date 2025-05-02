@@ -66,7 +66,7 @@ impl Wallet<SigningKey> {
         S: AsRef<[u8]>,
     {
         let (secret, uuid) = eth_keystore::new(dir, rng, password, name)?;
-        let signer = SigningKey::from_bytes(secret.as_slice())?;
+        let signer = SigningKey::from_bytes(secret.as_slice().into())?;
         let address = secret_key_to_address(&signer);
         Ok((Self { signer, address, chain_id: 1 }, uuid))
     }
@@ -79,7 +79,7 @@ impl Wallet<SigningKey> {
         S: AsRef<[u8]>,
     {
         let secret = eth_keystore::decrypt_key(keypath, password)?;
-        let signer = SigningKey::from_bytes(secret.as_slice())?;
+        let signer = SigningKey::from_bytes(secret.as_slice().into())?;
         let address = secret_key_to_address(&signer);
         Ok(Self { signer, address, chain_id: 1 })
     }
@@ -94,9 +94,9 @@ impl Wallet<SigningKey> {
 
 impl PartialEq for Wallet<SigningKey> {
     fn eq(&self, other: &Self) -> bool {
-        self.signer.to_bytes().eq(&other.signer.to_bytes()) &&
-            self.address == other.address &&
-            self.chain_id == other.chain_id
+        self.signer.to_bytes().eq(&other.signer.to_bytes())
+            && self.address == other.address
+            && self.chain_id == other.chain_id
     }
 }
 
@@ -124,7 +124,7 @@ impl FromStr for Wallet<SigningKey> {
 
     fn from_str(src: &str) -> Result<Self, Self::Err> {
         let src = hex::decode(src)?;
-        let sk = SigningKey::from_bytes(&src)?;
+        let sk = SigningKey::from_bytes(src.as_slice().into())?;
         Ok(sk.into())
     }
 }
@@ -267,7 +267,7 @@ mod tests {
 
         // this should populate the tx chain_id as the signer's chain_id (1337) before signing and
         // normalize the v
-        let sig = wallet.sign_transaction_sync(&tx);
+        let sig = wallet.sign_transaction_sync(&tx).unwrap();
 
         // ensure correct v given the chain - first extract recid
         let recid = (sig.v - 35) % 2;
