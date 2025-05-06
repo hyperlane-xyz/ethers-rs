@@ -83,8 +83,8 @@ pub struct ContractCall<M, D> {
     pub function: Function,
     /// Optional block number to be used when calculating the transaction's gas and nonce
     pub block: Option<BlockId>,
-    pub(crate) client: Arc<M>,
-    pub(crate) datatype: PhantomData<D>,
+    pub client: Arc<M>,
+    pub datatype: PhantomData<D>,
 }
 
 impl<M, D> Clone for ContractCall<M, D> {
