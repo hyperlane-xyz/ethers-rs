@@ -1,3 +1,5 @@
+mod hash;
+
 mod mnemonic;
 pub use mnemonic::{MnemonicBuilder, MnemonicBuilderError};
 
@@ -10,7 +12,7 @@ mod yubi;
 use crate::{to_eip155_v, Signer};
 use ethers_core::{
     k256::{
-        ecdsa::{signature::hazmat::PrehashSigner, RecoveryId, Signature as RecoverableSignature},
+        ecdsa::{recoverable::Signature as RecoverableSignature, signature::DigestSigner},
         elliptic_curve::FieldBytes,
         Secp256k1,
     },
@@ -20,6 +22,7 @@ use ethers_core::{
     },
     utils::hash_message,
 };
+use hash::Sha256Proxy;
 
 use async_trait::async_trait;
 use std::fmt;
@@ -61,7 +64,7 @@ use std::fmt;
 /// [`Signature`]: ethers_core::types::Signature
 /// [`hash_message`]: fn@ethers_core::utils::hash_message
 #[derive(Clone)]
-pub struct Wallet<D: PrehashSigner<(RecoverableSignature, RecoveryId)>> {
+pub struct Wallet<D: DigestSigner<Sha256Proxy, RecoverableSignature>> {
     /// The Wallet's private Key
     pub(crate) signer: D,
     /// The wallet's address
@@ -70,7 +73,7 @@ pub struct Wallet<D: PrehashSigner<(RecoverableSignature, RecoveryId)>> {
     pub(crate) chain_id: u64,
 }
 
-impl<D: PrehashSigner<(RecoverableSignature, RecoveryId)>> Wallet<D> {
+impl<D: DigestSigner<Sha256Proxy, RecoverableSignature>> Wallet<D> {
     /// Construct a new wallet with an external Signer
     pub fn new_with_signer(signer: D, address: Address, chain_id: u64) -> Self {
         Wallet { signer, address, chain_id }
@@ -79,7 +82,7 @@ impl<D: PrehashSigner<(RecoverableSignature, RecoveryId)>> Wallet<D> {
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-impl<D: Sync + Send + PrehashSigner<(RecoverableSignature, RecoveryId)>> Signer for Wallet<D> {
+impl<D: Sync + Send + DigestSigner<Sha256Proxy, RecoverableSignature>> Signer for Wallet<D> {
     type Error = WalletError;
 
     async fn sign_message<S: Send + Sync + AsRef<[u8]>>(
@@ -89,7 +92,7 @@ impl<D: Sync + Send + PrehashSigner<(RecoverableSignature, RecoveryId)>> Signer 
         let message = message.as_ref();
         let message_hash = hash_message(message);
 
-        self.sign_hash(message_hash)
+        Ok(self.sign_hash(message_hash))
     }
 
     async fn sign_transaction(&self, tx: &TypedTransaction) -> Result<Signature, Self::Error> {
@@ -98,7 +101,7 @@ impl<D: Sync + Send + PrehashSigner<(RecoverableSignature, RecoveryId)>> Signer 
             // in the case we don't have a chain_id, let's use the signer chain id instead
             tx_with_chain.set_chain_id(self.chain_id);
         }
-        self.sign_transaction_sync(&tx_with_chain)
+        Ok(self.sign_transaction_sync(&tx_with_chain))
     }
 
     async fn sign_typed_data<T: Eip712 + Send + Sync>(
@@ -108,7 +111,7 @@ impl<D: Sync + Send + PrehashSigner<(RecoverableSignature, RecoveryId)>> Signer 
         let encoded =
             payload.encode_eip712().map_err(|e| Self::Error::Eip712Error(e.to_string()))?;
 
-        self.sign_hash(H256::from(encoded))
+        Ok(self.sign_hash(H256::from(encoded)))
     }
 
     fn address(&self) -> Address {
@@ -127,36 +130,37 @@ impl<D: Sync + Send + PrehashSigner<(RecoverableSignature, RecoveryId)>> Signer 
     }
 }
 
-impl<D: PrehashSigner<(RecoverableSignature, RecoveryId)>> Wallet<D> {
+impl<D: DigestSigner<Sha256Proxy, RecoverableSignature>> Wallet<D> {
     /// Synchronously signs the provided transaction, normalizing the signature `v` value with
     /// EIP-155 using the transaction's `chain_id`, or the signer's `chain_id` if the transaction
     /// does not specify one.
-    pub fn sign_transaction_sync(&self, tx: &TypedTransaction) -> Result<Signature, WalletError> {
+    pub fn sign_transaction_sync(&self, tx: &TypedTransaction) -> Signature {
         // rlp (for sighash) must have the same chain id as v in the signature
         let chain_id = tx.chain_id().map(|id| id.as_u64()).unwrap_or(self.chain_id);
         let mut tx = tx.clone();
         tx.set_chain_id(chain_id);
 
         let sighash = tx.sighash();
-        let mut sig = self.sign_hash(sighash)?;
+        let mut sig = self.sign_hash(sighash);
 
         // sign_hash sets `v` to recid + 27, so we need to subtract 27 before normalizing
         sig.v = to_eip155_v(sig.v as u8 - 27, chain_id);
-        Ok(sig)
+        sig
     }
 
     /// Signs the provided hash.
-    pub fn sign_hash(&self, hash: H256) -> Result<Signature, WalletError> {
-        let (recoverable_sig, recovery_id) = self.signer.sign_prehash(hash.as_ref())?;
+    pub fn sign_hash(&self, hash: H256) -> Signature {
+        let recoverable_sig: RecoverableSignature =
+            self.signer.sign_digest(Sha256Proxy::from(hash));
 
-        let v = u8::from(recovery_id) as u64 + 27;
+        let v = u8::from(recoverable_sig.recovery_id()) as u64 + 27;
 
         let r_bytes: FieldBytes<Secp256k1> = recoverable_sig.r().into();
         let s_bytes: FieldBytes<Secp256k1> = recoverable_sig.s().into();
         let r = U256::from_big_endian(r_bytes.as_slice());
         let s = U256::from_big_endian(s_bytes.as_slice());
 
-        Ok(Signature { r, s, v })
+        Signature { r, s, v }
     }
 
     /// Gets the wallet's signer
@@ -166,7 +170,7 @@ impl<D: PrehashSigner<(RecoverableSignature, RecoveryId)>> Wallet<D> {
 }
 
 // do not log the signer
-impl<D: PrehashSigner<(RecoverableSignature, RecoveryId)>> fmt::Debug for Wallet<D> {
+impl<D: DigestSigner<Sha256Proxy, RecoverableSignature>> fmt::Debug for Wallet<D> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Wallet")
             .field("address", &self.address)
