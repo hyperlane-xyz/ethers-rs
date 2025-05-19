@@ -86,8 +86,6 @@ pub const EIP1559_FEE_ESTIMATION_DEFAULT_BASE_FEE: u64 = 100_000;
 /// Multiplier for the current base fee to estimate max base fee for the next block.
 /// update: reflects https://github.com/alloy-rs/alloy/blob/1060b08ffc4ce5b858755dec15da34a4ccf43d0f/crates/provider/src/utils.rs#L44
 pub const EIP1559_BASE_FEE_MULTIPLIER: u128 = 2;
-/// buffer of 20% for the priority fee
-pub const EIP1559_PRIORITY_FEE_MULTIPLIER: u128 = 120;
 /// The threshold max change/difference (in %) at which we will ignore the fee history values
 /// under it.
 pub const EIP1559_FEE_ESTIMATION_THRESHOLD_MAX_CHANGE: i64 = 200;
@@ -503,7 +501,7 @@ fn estimate_priority_fee(rewards: Vec<Vec<U256>>) -> U256 {
     let median =
         if n % 2 == 0 { (values[n / 2 - 1] + values[n / 2]) / 2 } else { values[n / 2] };
 
-    median * U256::from(EIP1559_PRIORITY_FEE_MULTIPLIER) / U256::from(100)
+    median
 }
 
 fn base_fee_surged(base_fee_per_gas: U256) -> U256 {
@@ -982,11 +980,13 @@ mod tests {
         ]; // say, last 3 blocks
         let (max_fee, priority_fee) = eip1559_default_estimator(base_fee_per_gas, rewards.clone());
         assert_eq!(priority_fee, estimate_priority_fee(rewards.clone()));
+        assert_eq!(priority_fee, 102_000_000_000u64.into());
         let expected_max_fee = base_fee_surged(base_fee_per_gas) + priority_fee;
         assert_eq!(max_fee, expected_max_fee);
+        assert_eq!(max_fee, 302_000_000_002u64.into());
 
         // The median should be taken because none of the changes are big enough to ignore values.
-        assert_eq!(estimate_priority_fee(rewards), 122_400_000_000u64.into());
+        assert_eq!(estimate_priority_fee(rewards), 102_000_000_000u64.into());
 
         // Ensure fee estimation doesn't panic when overflowing a u32. This had been a divide by
         // zero.
@@ -994,7 +994,7 @@ mod tests {
         let rewards_overflow: Vec<Vec<U256>> = vec![vec![overflow], vec![overflow]];
         assert_eq!(
             estimate_priority_fee(rewards_overflow),
-            overflow * U256::from(EIP1559_PRIORITY_FEE_MULTIPLIER) / U256::from(100)
+            overflow
         );
     }
 }
