@@ -39,6 +39,7 @@ use std::{
     convert::TryInto,
     fmt,
 };
+use std::convert::TryFrom;
 use thiserror::Error;
 
 /// I256 overflows for numbers wider than 77 units.
@@ -87,6 +88,9 @@ pub const EIP1559_FEE_ESTIMATION_DEFAULT_BASE_FEE: u64 = 100_000;
 pub const EIP1559_BASE_FEE_MULTIPLIER: u128 = 2;
 /// buffer of 20% for the priority fee
 pub const EIP1559_PRIORITY_FEE_MULTIPLIER: u128 = 120;
+/// The threshold max change/difference (in %) at which we will ignore the fee history values
+/// under it.
+pub const EIP1559_FEE_ESTIMATION_THRESHOLD_MAX_CHANGE: i64 = 200;
 
 /// This enum holds the numeric types that a possible to be returned by `parse_units` and
 /// that are taken by `format_units`.
@@ -463,9 +467,41 @@ fn estimate_priority_fee(rewards: Vec<Vec<U256>>) -> U256 {
         return rewards[0]
     }
     rewards.sort();
-    let n = rewards.len();
+
+    // A copy of the same vector is created for convenience to calculate percentage change
+    // between subsequent fee values.
+    let mut rewards_copy = rewards.clone();
+    rewards_copy.rotate_left(1);
+
+    let mut percentage_change: Vec<I256> = rewards
+        .iter()
+        .zip(rewards_copy.iter())
+        .map(|(a, b)| {
+            let a = I256::try_from(*a).expect("priority fee overflow");
+            let b = I256::try_from(*b).expect("priority fee overflow");
+            ((b - a) * 100.into()) / a
+        })
+        .collect();
+    percentage_change.pop();
+
+    // Fetch the max of the percentage change, and that element's index.
+    let max_change = percentage_change.iter().max().unwrap();
+    let max_change_index = percentage_change.iter().position(|&c| c == *max_change).unwrap();
+
+    // If we encountered a big change in fees at a certain position, then consider only
+    // the values >= it.
+    let values = if *max_change >= EIP1559_FEE_ESTIMATION_THRESHOLD_MAX_CHANGE.into() &&
+        (max_change_index >= (rewards.len() / 2))
+    {
+        rewards[max_change_index..].to_vec()
+    } else {
+        rewards
+    };
+
+    // Return the median.
+    let n = values.len();
     let median =
-        if n % 2 == 0 { (rewards[n / 2 - 1] + rewards[n / 2]) / 2 } else { rewards[n / 2] };
+        if n % 2 == 0 { (values[n / 2 - 1] + values[n / 2]) / 2 } else { values[n / 2] };
 
     median * U256::from(EIP1559_PRIORITY_FEE_MULTIPLIER) / U256::from(100)
 }
