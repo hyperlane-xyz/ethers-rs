@@ -464,6 +464,8 @@ fn estimate_priority_fee(rewards: Vec<Vec<U256>>) -> U256 {
     if rewards.len() == 1 {
         return rewards[0]
     }
+
+    // Sort the rewards as we will eventually take the median.
     rewards.sort();
 
     // A copy of the same vector is created for convenience to calculate percentage change
