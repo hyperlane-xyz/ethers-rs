@@ -77,8 +77,7 @@ pub const WEI_IN_ETHER: U256 = U256([0x0de0b6b3a7640000, 0x0, 0x0, 0x0]);
 pub const EIP1559_FEE_ESTIMATION_PAST_BLOCKS: u64 = 10;
 /// The default percentile of gas premiums that are fetched for fee estimation.
 pub const EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE: f64 = 5.0;
-/// The default max priority fee per gas, used in case the base fee is within a threshold.
-/// update: reflects https://github.com/alloy-rs/alloy/blob/1060b08ffc4ce5b858755dec15da34a4ccf43d0f/crates/provider/src/utils.rs#L44
+// reduced default max priority fee so that we don't overpay
 pub const EIP1559_FEE_ESTIMATION_DEFAULT_PRIORITY_FEE: u64 = 100_000;
 
 pub const EIP1559_FEE_ESTIMATION_DEFAULT_BASE_FEE: u64 = 100_000;
@@ -506,7 +505,6 @@ fn estimate_priority_fee(rewards: Vec<Vec<U256>>) -> U256 {
 }
 
 fn base_fee_surged(base_fee_per_gas: U256) -> U256 {
-    // update: reflect https://github.com/alloy-rs/alloy/blob/1060b08ffc4ce5b858755dec15da34a4ccf43d0f/crates/provider/src/utils.rs#L44
     std::cmp::max(
         base_fee_per_gas * U256::from(EIP1559_BASE_FEE_MULTIPLIER),
         U256::from(EIP1559_FEE_ESTIMATION_DEFAULT_BASE_FEE),
