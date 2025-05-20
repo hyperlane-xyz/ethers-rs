@@ -36,10 +36,9 @@ use elliptic_curve::sec1::ToEncodedPoint;
 use ethabi::ethereum_types::FromDecStrErr;
 use k256::{ecdsa::SigningKey, PublicKey as K256PublicKey};
 use std::{
-    convert::TryInto,
+    convert::{TryFrom, TryInto},
     fmt,
 };
-use std::convert::TryFrom;
 use thiserror::Error;
 
 /// I256 overflows for numbers wider than 77 units.
