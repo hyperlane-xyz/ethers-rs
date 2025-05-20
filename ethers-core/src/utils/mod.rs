@@ -36,9 +36,10 @@ use elliptic_curve::sec1::ToEncodedPoint;
 use ethabi::ethereum_types::FromDecStrErr;
 use k256::{ecdsa::SigningKey, PublicKey as K256PublicKey};
 use std::{
-    convert::{TryFrom, TryInto},
+    convert::TryInto,
     fmt,
 };
+use std::convert::TryFrom;
 use thiserror::Error;
 
 /// I256 overflows for numbers wider than 77 units.
@@ -78,10 +79,13 @@ pub const EIP1559_FEE_ESTIMATION_PAST_BLOCKS: u64 = 10;
 /// The default percentile of gas premiums that are fetched for fee estimation.
 pub const EIP1559_FEE_ESTIMATION_REWARD_PERCENTILE: f64 = 5.0;
 /// The default max priority fee per gas, used in case the base fee is within a threshold.
-pub const EIP1559_FEE_ESTIMATION_DEFAULT_PRIORITY_FEE: u64 = 100_000_000;
-/// The threshold for base fee below which we use the default priority fee, and beyond which we
-/// estimate an appropriate value for priority fee.
-pub const EIP1559_FEE_ESTIMATION_PRIORITY_FEE_TRIGGER: u64 = 100_000_000_000;
+/// update: reflects https://github.com/alloy-rs/alloy/blob/1060b08ffc4ce5b858755dec15da34a4ccf43d0f/crates/provider/src/utils.rs#L44
+pub const EIP1559_FEE_ESTIMATION_DEFAULT_PRIORITY_FEE: u64 = 100_000;
+
+pub const EIP1559_FEE_ESTIMATION_DEFAULT_BASE_FEE: u64 = 100_000;
+/// Multiplier for the current base fee to estimate max base fee for the next block.
+/// update: reflects https://github.com/alloy-rs/alloy/blob/1060b08ffc4ce5b858755dec15da34a4ccf43d0f/crates/provider/src/utils.rs#L44
+pub const EIP1559_BASE_FEE_MULTIPLIER: u128 = 2;
 /// The threshold max change/difference (in %) at which we will ignore the fee history values
 /// under it.
 pub const EIP1559_FEE_ESTIMATION_THRESHOLD_MAX_CHANGE: i64 = 200;
@@ -432,18 +436,22 @@ pub fn parse_bytes32_string(bytes: &[u8; 32]) -> Result<&str, ConversionError> {
     Ok(std::str::from_utf8(&bytes[..length])?)
 }
 
-/// The default EIP-1559 fee estimator which is based on the work by [MyCrypto](https://github.com/MyCryptoHQ/MyCrypto/blob/master/src/services/ApiService/Gas/eip1559.ts)
+/// The default EIP-1559 fee estimator.
+///
+/// Based on a conservative estimate
+/// of 2x base fee + 1.2 x median priority fees.
+/// safe against 0 base and priority fee values.
+/// derived from tested designs:
+/// alloy
+/// metamask: https://github.com/MetaMask/core/blob/v143.0.0/packages/gas-fee-controller/src/fetchGasEstimatesViaEthFeeHistory/calculateGasFeeEstimatesForPriorityLevels.ts
 pub fn eip1559_default_estimator(base_fee_per_gas: U256, rewards: Vec<Vec<U256>>) -> (U256, U256) {
     let max_priority_fee_per_gas = std::cmp::max(
         estimate_priority_fee(rewards),
         U256::from(EIP1559_FEE_ESTIMATION_DEFAULT_PRIORITY_FEE),
     );
     let potential_max_fee = base_fee_surged(base_fee_per_gas);
-    let max_fee_per_gas = if max_priority_fee_per_gas > potential_max_fee {
-        max_priority_fee_per_gas + potential_max_fee
-    } else {
-        potential_max_fee
-    };
+    let max_fee_per_gas = max_priority_fee_per_gas + potential_max_fee;
+
     (max_fee_per_gas, max_priority_fee_per_gas)
 }
 
@@ -456,6 +464,7 @@ fn estimate_priority_fee(rewards: Vec<Vec<U256>>) -> U256 {
     if rewards.len() == 1 {
         return rewards[0]
     }
+
     // Sort the rewards as we will eventually take the median.
     rewards.sort();
 
@@ -490,19 +499,19 @@ fn estimate_priority_fee(rewards: Vec<Vec<U256>>) -> U256 {
     };
 
     // Return the median.
-    values[values.len() / 2]
+    let n = values.len();
+    let median =
+        if n % 2 == 0 { (values[n / 2 - 1] + values[n / 2]) / 2 } else { values[n / 2] };
+
+    median
 }
 
 fn base_fee_surged(base_fee_per_gas: U256) -> U256 {
-    if base_fee_per_gas <= U256::from(40_000_000_000u64) {
-        base_fee_per_gas * 2
-    } else if base_fee_per_gas <= U256::from(100_000_000_000u64) {
-        base_fee_per_gas * 16 / 10
-    } else if base_fee_per_gas <= U256::from(200_000_000_000u64) {
-        base_fee_per_gas * 14 / 10
-    } else {
-        base_fee_per_gas * 12 / 10
-    }
+    // update: reflect https://github.com/alloy-rs/alloy/blob/1060b08ffc4ce5b858755dec15da34a4ccf43d0f/crates/provider/src/utils.rs#L44
+    std::cmp::max(
+        base_fee_per_gas * U256::from(EIP1559_BASE_FEE_MULTIPLIER),
+        U256::from(EIP1559_FEE_ESTIMATION_DEFAULT_BASE_FEE),
+    )
 }
 
 /// A bit of hack to find an unused TCP port.
@@ -954,25 +963,29 @@ mod tests {
 
     #[test]
     fn test_eip1559_default_estimator() {
-        // If the base fee is below the triggering base fee, we should get the default priority fee
-        // with the base fee surged.
-        let base_fee_per_gas = U256::from(EIP1559_FEE_ESTIMATION_PRIORITY_FEE_TRIGGER) - 1;
-        let rewards: Vec<Vec<U256>> = vec![vec![]];
-        let (base_fee, priority_fee) = eip1559_default_estimator(base_fee_per_gas, rewards);
+        // if estimate_priority_fee returns 0, we should return the default priority fee
+        let rewards: Vec<Vec<U256>> = vec![vec![U256::zero()]];
+        let (base_fee, priority_fee) = eip1559_default_estimator(U256::zero(), rewards);
+        assert_eq!(
+            base_fee,
+            U256::from(EIP1559_FEE_ESTIMATION_DEFAULT_PRIORITY_FEE) +
+                U256::from(EIP1559_FEE_ESTIMATION_DEFAULT_BASE_FEE)
+        );
         assert_eq!(priority_fee, U256::from(EIP1559_FEE_ESTIMATION_DEFAULT_PRIORITY_FEE));
-        assert_eq!(base_fee, base_fee_surged(base_fee_per_gas));
 
-        // If the base fee is above the triggering base fee, we calculate the priority fee using
-        // the fee history (rewards).
-        let base_fee_per_gas = U256::from(EIP1559_FEE_ESTIMATION_PRIORITY_FEE_TRIGGER) + 1;
+        // calculate the priority fee using the fee history (rewards).
+        let base_fee_per_gas = U256::from(100_000_000_000u64) + 1;
         let rewards: Vec<Vec<U256>> = vec![
             vec![100_000_000_000u64.into()],
             vec![105_000_000_000u64.into()],
             vec![102_000_000_000u64.into()],
         ]; // say, last 3 blocks
-        let (base_fee, priority_fee) = eip1559_default_estimator(base_fee_per_gas, rewards.clone());
-        assert_eq!(base_fee, base_fee_surged(base_fee_per_gas));
+        let (max_fee, priority_fee) = eip1559_default_estimator(base_fee_per_gas, rewards.clone());
         assert_eq!(priority_fee, estimate_priority_fee(rewards.clone()));
+        assert_eq!(priority_fee, 102_000_000_000u64.into());
+        let expected_max_fee = base_fee_surged(base_fee_per_gas) + priority_fee;
+        assert_eq!(max_fee, expected_max_fee);
+        assert_eq!(max_fee, 302_000_000_002u64.into());
 
         // The median should be taken because none of the changes are big enough to ignore values.
         assert_eq!(estimate_priority_fee(rewards), 102_000_000_000u64.into());
@@ -981,6 +994,9 @@ mod tests {
         // zero.
         let overflow = U256::from(u32::MAX) + 1;
         let rewards_overflow: Vec<Vec<U256>> = vec![vec![overflow], vec![overflow]];
-        assert_eq!(estimate_priority_fee(rewards_overflow), overflow);
+        assert_eq!(
+            estimate_priority_fee(rewards_overflow),
+            overflow
+        );
     }
 }
