@@ -1,5 +1,8 @@
 //! AWS KMS-based Signer
 
+use std::future::Future;
+use std::time::Duration;
+
 use ethers_core::{
     k256::ecdsa::{Error as K256Error, Signature as KSig, VerifyingKey},
     types::{
@@ -50,6 +53,7 @@ pub struct AwsSigner {
     key_id: String,
     pubkey: VerifyingKey,
     address: Address,
+    timeout: Option<Duration>,
 }
 
 impl std::fmt::Debug for AwsSigner {
@@ -59,6 +63,7 @@ impl std::fmt::Debug for AwsSigner {
             .field("chain_id", &self.chain_id)
             .field("pubkey", &hex::encode(self.pubkey.to_bytes()))
             .field("address", &self.address)
+            .field("timeout", &self.timeout)
             .finish()
     }
 }
@@ -92,6 +97,8 @@ pub enum AwsSignerError {
     /// Error type from Eip712Error message
     #[error("error encoding eip712 struct: {0:?}")]
     Eip712Error(String),
+    #[error("timeout, {0:?} elapsed")]
+    Timeout(Duration),
 }
 
 impl From<String> for AwsSignerError {
@@ -110,7 +117,8 @@ impl From<spki::Error> for AwsSignerError {
 async fn request_get_pubkey<T>(
     kms: &KmsClient,
     key_id: T,
-) -> Result<rusoto_kms::GetPublicKeyResponse, RusotoError<GetPublicKeyError>>
+    timeout: Option<Duration>,
+) -> Result<rusoto_kms::GetPublicKeyResponse, AwsSignerError>
 where
     T: AsRef<str>,
 {
@@ -118,7 +126,7 @@ where
 
     let req = GetPublicKeyRequest { grant_tokens: None, key_id: key_id.as_ref().to_owned() };
     trace!("{:?}", &req);
-    let resp = kms.get_public_key(req).await;
+    let resp = with_timeout(timeout, kms.get_public_key(req)).await;
     trace!("{:?}", &resp);
     resp
 }
@@ -128,7 +136,8 @@ async fn request_sign_digest<T>(
     kms: &KmsClient,
     key_id: T,
     digest: [u8; 32],
-) -> Result<SignResponse, RusotoError<SignError>>
+    timeout: Option<Duration>,
+) -> Result<SignResponse, AwsSignerError>
 where
     T: AsRef<str>,
 {
@@ -141,9 +150,24 @@ where
         signing_algorithm: "ECDSA_SHA_256".to_owned(),
     };
     trace!("{:?}", &req);
-    let resp = kms.sign(req).await;
+    let resp = with_timeout(timeout, kms.sign(req)).await;
     trace!("{:?}", &resp);
     resp
+}
+
+/// Runs a future with an optional timeout.
+async fn with_timeout<F, T, E>(t: Option<Duration>, fut: F) -> Result<T, AwsSignerError>
+where
+    F: Future<Output = Result<T, RusotoError<E>>>,
+    AwsSignerError: From<RusotoError<E>>,
+{
+    match t {
+        Some(duration) => match tokio::time::timeout(duration, fut).await {
+            Ok(inner) => Ok(inner?),
+            Err(_) => Err(AwsSignerError::Timeout(duration)),
+        },
+        None => Ok(fut.await?),
+    }
 }
 
 impl AwsSigner {
@@ -156,11 +180,13 @@ impl AwsSigner {
         kms: KmsClient,
         key_id: T,
         chain_id: u64,
+        timeout: Option<Duration>,
     ) -> Result<AwsSigner, AwsSignerError>
     where
         T: AsRef<str>,
     {
-        let pubkey = request_get_pubkey(&kms, &key_id).await.map(utils::decode_pubkey)??;
+        let pubkey =
+            request_get_pubkey(&kms, &key_id, timeout).await.map(utils::decode_pubkey)??;
         let address = verifying_key_to_address(&pubkey);
 
         debug!(
@@ -169,7 +195,7 @@ impl AwsSigner {
             hex::encode(address)
         );
 
-        Ok(Self { kms, chain_id, key_id: key_id.as_ref().to_owned(), pubkey, address })
+        Ok(Self { kms, chain_id, key_id: key_id.as_ref().to_owned(), pubkey, address, timeout })
     }
 
     /// Fetch the pubkey associated with a key id
@@ -177,7 +203,7 @@ impl AwsSigner {
     where
         T: AsRef<str>,
     {
-        request_get_pubkey(&self.kms, key_id).await.map(utils::decode_pubkey)?
+        request_get_pubkey(&self.kms, key_id, self.timeout).await.map(utils::decode_pubkey)?
     }
 
     /// Fetch the pubkey associated with this signer's key ID
@@ -194,7 +220,9 @@ impl AwsSigner {
     where
         T: AsRef<str>,
     {
-        request_sign_digest(&self.kms, key_id, digest).await.map(utils::decode_signature)?
+        request_sign_digest(&self.kms, key_id, digest, self.timeout)
+            .await
+            .map(utils::decode_signature)?
     }
 
     /// Sign a digest with this signer's key
@@ -320,11 +348,36 @@ mod tests {
         };
         setup_tracing();
         let client = env_client();
-        let signer = AwsSigner::new(client, key_id, chain_id).await.unwrap();
+        let signer = AwsSigner::new(client, key_id, chain_id, None).await.unwrap();
 
         let message = vec![0, 1, 2, 3];
 
         let sig = signer.sign_message(&message).await.unwrap();
         sig.verify(message, signer.address).expect("valid sig");
+    }
+
+    #[tokio::test]
+    async fn test_with_timeout() {
+        // Future is successful within the timeout
+        let timeout = Duration::from_millis(100);
+        let result = with_timeout(Some(timeout), async { Ok::<_, RusotoError<SignError>>(42) })
+            .await
+            .unwrap();
+        assert_eq!(result, 42);
+
+        // Future gives an error
+        let result = with_timeout(Some(timeout), async {
+            Err::<(), _>(RusotoError::Service(SignError::KMSInternal("error".to_string())))
+        })
+        .await;
+        assert!(matches!(result, Err(AwsSignerError::SignError(_))));
+
+        // Future times out
+        let result = with_timeout(Some(timeout), async {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            Ok::<_, RusotoError<SignError>>(42)
+        })
+        .await;
+        assert!(matches!(result, Err(AwsSignerError::Timeout(timeout))));
     }
 }
