@@ -192,6 +192,11 @@ impl<T: JsonRpcClientWrapper> QuorumProvider<T> {
         let mut numbers = vec![];
         let mut errors = vec![];
 
+        // 1. First we try to reach quorum
+        // 2. After reaching quorum, rocord how long it took to
+        //    reach quorum
+        // 3. Wait for any remaining responses to be return, equal
+        //    to the amount of time it took to reach quorum.
         let required_weight = self.quorum_weight();
         let mut weight_achieved = 0;
 
@@ -216,8 +221,8 @@ impl<T: JsonRpcClientWrapper> QuorumProvider<T> {
 
         let quorum_reached_timestamp = Instant::now();
 
-        // Current grace period to wait for remaining requests is set to
-        // how long it took for us to reach quorum
+        // Current grace period to wait for remaining requests is
+        // to wait for how long it initially took to reach quorum
         let quorum_grace_period = quorum_reached_timestamp.duration_since(start);
         let timeout_timestamp = quorum_reached_timestamp.checked_add(quorum_grace_period)
             .unwrap_or_else(|| Instant::now());
@@ -248,11 +253,11 @@ impl<T: JsonRpcClientWrapper> QuorumProvider<T> {
         }
 
         numbers.sort_by(|(_, block_a), (_, block_b)| {
-            // order by descending block number
+            // order by descending order
             block_a.cmp(block_b).reverse()
         });
 
-        // find the highest possible block number a quorum agrees on
+        // find the highest possible value a quorum agrees on
         let mut cumulative_weight = 0;
         let mut aggregated_num: Option<N> = None;
 
@@ -566,6 +571,8 @@ where
             // TODO: to robustly support eip-1559, we will likely need to also support
             // eth_feeHistory. This returns an object with various numbers rather than a
             // single number, so we'll need some additional code to handle this case.
+
+            // For RPCs that return numbers that can vary amongst inner providers, come to quorum on
             "eth_blockNumber" | "eth_estimateGas" | "eth_gasPrice" | "eth_maxPriorityFeePerGas" => {
                 let number: U256 = self.get_quorum_number(method, params).await?;
                 // a little janky to convert to a string and back but we don't know for sure what
