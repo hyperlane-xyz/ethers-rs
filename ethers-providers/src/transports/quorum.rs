@@ -219,38 +219,23 @@ impl<T: JsonRpcClientWrapper> QuorumProvider<T> {
             }
         }
 
-        let quorum_reached_timestamp = Instant::now();
-
         // Current grace period to wait for remaining requests is
         // to wait for how long it initially took to reach quorum
+        let quorum_reached_timestamp = Instant::now();
         let quorum_grace_period = quorum_reached_timestamp.duration_since(start);
-        let timeout_timestamp = quorum_reached_timestamp.checked_add(quorum_grace_period)
-            .unwrap_or_else(|| Instant::now());
-        // try and wait for any remaining requests
-        while !queries.is_empty() {
-            let now = Instant::now();
-            // if timeout has been exceeded, break
-            if now >= timeout_timestamp {
-                break;
-            }
-            // how long to wait
-            let timeout_duration = timeout_timestamp.duration_since(now);
-            match tokio::time::timeout(timeout_duration, future::select_all(queries)).await {
-                Ok((response, _index, remaining)) => {
-                    queries = remaining;
-                    match response {
-                        Ok(v) => {
-                            numbers.push(v);
-                        }
-                        Err(e) => errors.push(e),
-                    }
 
-                }
-                Err(_) => {
-                    break;
+        // try and wait for any remaining requests
+        let _ = tokio::time::timeout(quorum_grace_period, async {
+            while !queries.is_empty() {
+                let (response, _index, remaining) = future::select_all(queries).await;
+                queries = remaining;
+                match response {
+                    Ok(v) => numbers.push(v),
+                    Err(e) => errors.push(e),
                 }
             }
-        }
+        })
+        .await;
 
         numbers.sort_by(|(_, block_a), (_, block_b)| {
             // order by descending order
@@ -765,11 +750,16 @@ impl WrappedParams {
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
 mod tests {
-    use std::{collections::VecDeque, sync::Arc, time::{Duration, SystemTime}};
+    use std::{
+        collections::VecDeque,
+        sync::Arc,
+        time::{Duration, SystemTime},
+    };
 
     use super::{Quorum, QuorumProvider, WeightedProvider};
     use crate::{
-        transports::quorum::WrappedParams, JsonRpcClientWrapper, Middleware, MockError, MockProvider, Provider, ProviderError
+        transports::quorum::WrappedParams, JsonRpcClientWrapper, Middleware, MockError,
+        MockProvider, Provider, ProviderError,
     };
     use ethers_core::types::{U256, U64};
     use serde_json::Value;
@@ -845,8 +835,7 @@ mod tests {
             _params: WrappedParams,
         ) -> Result<Value, ProviderError> {
             tokio::time::sleep(self.delay).await;
-            self.responses.lock().await.pop_back()
-                .ok_or(MockError::EmptyResponses)?
+            self.responses.lock().await.pop_back().ok_or(MockError::EmptyResponses)?
         }
     }
 
@@ -968,13 +957,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_quorum_number_with_slow_responses_within_threshold() {
         let mut providers = Vec::new();
-        let test_data = [
-            (500, 200),
-            (500, 100),
-            (500, 100),
-            (800, 200),
-            (800, 200),
-        ];
+        let test_data = [(500, 200), (500, 100), (500, 100), (800, 200), (800, 200)];
         for (millis, value) in test_data {
             let mock = TestMockProvider::new(Duration::from_millis(millis));
             mock.push(Ok(serde_json::to_value(U64::from(value)).unwrap())).await;
@@ -992,13 +975,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_quorum_number_with_slow_responses_exceeds_threshold() {
         let mut providers = Vec::new();
-        let test_data = [
-            (500, 200),
-            (500, 200),
-            (500, 200),
-            (2000, 100),
-            (2000, 100),
-        ];
+        let test_data = [(500, 50), (500, 50), (500, 50), (2000, 100), (2000, 100)];
         for (millis, value) in test_data {
             let mock = TestMockProvider::new(Duration::from_millis(millis));
             mock.push(Ok(serde_json::to_value(U64::from(value)).unwrap())).await;
@@ -1009,14 +986,14 @@ mod tests {
         let quorum =
             QuorumProvider::builder().add_providers(providers).quorum(Quorum::Majority).build();
 
-        let quorum_number = quorum.get_quorum_number::<U64>("foo", WrappedParams::Zst).await.unwrap().as_u64();
+        let quorum_number =
+            quorum.get_quorum_number::<U64>("foo", WrappedParams::Zst).await.unwrap().as_u64();
         let elapsed = start.elapsed().unwrap();
 
         // check to make sure we didn't wait a long time
         assert!(elapsed <= Duration::from_millis(1200));
 
-        assert_eq!(quorum_number, 200);
-
+        assert_eq!(quorum_number, 50);
     }
 
     #[tokio::test]
