@@ -3,7 +3,7 @@ use std::{
     future::Future,
     pin::Pin,
     task::{Context, Poll},
-    time::SystemTime,
+    time::{Instant, SystemTime},
 };
 
 use crate::{provider::ProviderError, JsonRpcClient, PubsubClient};
@@ -192,12 +192,11 @@ impl<T: JsonRpcClientWrapper> QuorumProvider<T> {
         let mut numbers = vec![];
         let mut errors = vec![];
 
-        // exit once required quorum weight is achieved
         let required_weight = self.quorum_weight();
         let mut weight_achieved = 0;
 
         // timestamp of when we started
-        let start = SystemTime::now();
+        let start = Instant::now();
 
         // wait until we've reached quorum
         while !queries.is_empty() {
@@ -215,26 +214,22 @@ impl<T: JsonRpcClientWrapper> QuorumProvider<T> {
             }
         }
 
-        let quorum_reached_timestamp = SystemTime::now();
+        let quorum_reached_timestamp = Instant::now();
 
         // Current grace period to wait for remaining requests is set to
         // how long it took for us to reach quorum
-        let quorum_grace_period = quorum_reached_timestamp.duration_since(start)
-            .unwrap_or_default();
+        let quorum_grace_period = quorum_reached_timestamp.duration_since(start);
         let timeout_timestamp = quorum_reached_timestamp.checked_add(quorum_grace_period)
-            .unwrap_or_else(|| SystemTime::now());
+            .unwrap_or_else(|| Instant::now());
         // try and wait for any remaining requests
         while !queries.is_empty() {
-            let now = SystemTime::now();
+            let now = Instant::now();
             // if timeout has been exceeded, break
             if now >= timeout_timestamp {
                 break;
             }
             // how long to wait
-            let timeout_duration = match timeout_timestamp.duration_since(now) {
-                Ok(d) => d,
-                Err(_) => break,
-            };
+            let timeout_duration = timeout_timestamp.duration_since(now);
             match tokio::time::timeout(timeout_duration, future::select_all(queries)).await {
                 Ok((response, _index, remaining)) => {
                     queries = remaining;
@@ -770,7 +765,7 @@ mod tests {
         transports::quorum::WrappedParams, JsonRpcClientWrapper, Middleware, MockError, MockProvider, Provider, ProviderError
     };
     use ethers_core::types::{U256, U64};
-    use serde_json::{Number, Value};
+    use serde_json::Value;
     use tokio::sync::Mutex;
 
     async fn test_quorum(q: Quorum) {
@@ -839,8 +834,8 @@ mod tests {
     impl JsonRpcClientWrapper for TestMockProvider {
         async fn request(
             &self,
-            method: &str,
-            params: WrappedParams,
+            _method: &str,
+            _params: WrappedParams,
         ) -> Result<Value, ProviderError> {
             tokio::time::sleep(self.delay).await;
             self.responses.lock().await.pop_back()
