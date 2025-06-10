@@ -224,6 +224,8 @@ impl<T: JsonRpcClientWrapper> QuorumProvider<T> {
         let quorum_reached_timestamp = Instant::now();
         let quorum_grace_period = quorum_reached_timestamp.duration_since(start);
 
+        tracing::trace!(pending_queries_count=queries.len(), ?quorum_grace_period, "Quorum reached");
+
         // try and wait for any remaining requests
         let _ = tokio::time::timeout(quorum_grace_period, async {
             while !queries.is_empty() {
