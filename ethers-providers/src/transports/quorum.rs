@@ -3,6 +3,7 @@ use std::{
     future::Future,
     pin::Pin,
     task::{Context, Poll},
+    time::{Instant, SystemTime},
 };
 
 use crate::{provider::ProviderError, JsonRpcClient, PubsubClient};
@@ -190,21 +191,60 @@ impl<T: JsonRpcClientWrapper> QuorumProvider<T> {
 
         let mut numbers = vec![];
         let mut errors = vec![];
+
+        // 1. First we try to reach quorum
+        // 2. After reaching quorum, rocord how long it took to
+        //    reach quorum
+        // 3. Wait for any remaining responses to be return, equal
+        //    to the amount of time it took to reach quorum.
+        let required_weight = self.quorum_weight();
+        let mut weight_achieved = 0;
+
+        // timestamp of when we started
+        let start = Instant::now();
+
+        // wait until we've reached quorum
         while !queries.is_empty() {
             let (response, _index, remaining) = future::select_all(queries).await;
             queries = remaining;
             match response {
-                Ok(v) => numbers.push(v),
+                Ok(v) => {
+                    weight_achieved += v.0.weight;
+                    numbers.push(v);
+                    if weight_achieved >= required_weight {
+                        break;
+                    }
+                }
                 Err(e) => errors.push(e),
             }
         }
 
+        // Current grace period to wait for remaining requests is
+        // to wait for how long it initially took to reach quorum
+        let quorum_reached_timestamp = Instant::now();
+        let quorum_grace_period = quorum_reached_timestamp.duration_since(start);
+
+        tracing::trace!(pending_queries_count=queries.len(), ?quorum_grace_period, "Quorum reached");
+
+        // try and wait for any remaining requests
+        let _ = tokio::time::timeout(quorum_grace_period, async {
+            while !queries.is_empty() {
+                let (response, _index, remaining) = future::select_all(queries).await;
+                queries = remaining;
+                match response {
+                    Ok(v) => numbers.push(v),
+                    Err(e) => errors.push(e),
+                }
+            }
+        })
+        .await;
+
         numbers.sort_by(|(_, block_a), (_, block_b)| {
-            // order by descending block number
+            // order by descending order
             block_a.cmp(block_b).reverse()
         });
 
-        // find the highest possible block number a quorum agrees on
+        // find the highest possible value a quorum agrees on
         let mut cumulative_weight = 0;
         let mut aggregated_num: Option<N> = None;
 
@@ -214,7 +254,7 @@ impl<T: JsonRpcClientWrapper> QuorumProvider<T> {
             debug_assert!(aggregated_num.is_none() || aggregated_num.unwrap() >= n);
             aggregated_num = Some(n);
             if cumulative_weight >= self.quorum_weight {
-                return Ok(aggregated_num.unwrap())
+                return Ok(aggregated_num.unwrap());
             }
         }
         Err(QuorumError::NoQuorumReached {
@@ -239,18 +279,18 @@ impl<T: JsonRpcClientWrapper> QuorumProvider<T> {
             v
         } else {
             // at this time no normalization is required for calls with zero parameters.
-            return
+            return;
         };
 
         match method {
-            "eth_call" |
-            "eth_createAccessList" |
-            "eth_getStorageAt" |
-            "eth_getCode" |
-            "eth_getProof" |
-            "eth_estimateGas" |
-            "trace_call" |
-            "trace_block" => {
+            "eth_call"
+            | "eth_createAccessList"
+            | "eth_getStorageAt"
+            | "eth_getCode"
+            | "eth_getProof"
+            | "eth_estimateGas"
+            | "trace_call"
+            | "trace_block" => {
                 // calls that include the block number in the params at the last index of json array
                 if let Some(block) = params.as_array_mut().and_then(|arr| arr.last_mut()) {
                     self.replace_latest(block).await
@@ -368,13 +408,13 @@ impl<'a, T> Future for QuorumRequest<'a, T> {
                         *weight += response_weight;
                         if *weight >= this.inner.quorum_weight {
                             // reached quorum with multiple responses
-                            return Poll::Ready(Ok(val))
+                            return Poll::Ready(Ok(val));
                         } else {
                             this.responses.push((val, response_weight));
                         }
                     } else if response_weight >= this.inner.quorum_weight {
                         // reached quorum with single response
-                        return Poll::Ready(Ok(val))
+                        return Poll::Ready(Ok(val));
                     } else {
                         this.responses.push((val, response_weight));
                     }
@@ -520,7 +560,6 @@ where
             // single number, so we'll need some additional code to handle this case.
 
             // For RPCs that return numbers that can vary amongst inner providers, come to quorum on
-            // a single number
             "eth_blockNumber" | "eth_estimateGas" | "eth_gasPrice" | "eth_maxPriorityFeePerGas" => {
                 let number: U256 = self.get_quorum_number(method, params).await?;
                 // a little janky to convert to a string and back but we don't know for sure what
@@ -636,14 +675,14 @@ impl Stream for QuorumStream {
                         if *weight >= this.quorum_weight {
                             // reached quorum with multiple notification
                             this.benched.push(stream);
-                            return Poll::Ready(Some(val))
+                            return Poll::Ready(Some(val));
                         } else {
                             this.responses.push((val, response_weight));
                         }
                     } else if response_weight >= this.quorum_weight {
                         // reached quorum with single notification
                         this.benched.push(stream);
-                        return Poll::Ready(Some(val))
+                        return Poll::Ready(Some(val));
                     } else {
                         this.responses.push((val, response_weight));
                     }
@@ -658,7 +697,7 @@ impl Stream for QuorumStream {
         }
 
         if this.active.is_empty() && this.benched.is_empty() {
-            return Poll::Ready(None)
+            return Poll::Ready(None);
         }
         Poll::Pending
     }
@@ -713,9 +752,20 @@ impl WrappedParams {
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
 mod tests {
+    use std::{
+        collections::VecDeque,
+        sync::Arc,
+        time::{Duration, SystemTime},
+    };
+
     use super::{Quorum, QuorumProvider, WeightedProvider};
-    use crate::{transports::quorum::WrappedParams, Middleware, MockProvider, Provider};
+    use crate::{
+        transports::quorum::WrappedParams, JsonRpcClientWrapper, Middleware, MockError,
+        MockProvider, Provider, ProviderError,
+    };
     use ethers_core::types::{U256, U64};
+    use serde_json::Value;
+    use tokio::sync::Mutex;
 
     async fn test_quorum(q: Quorum) {
         let num = 5u64;
@@ -759,71 +809,193 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_get_quorum_block_number() {
-        let mut providers = Vec::new();
+    fn build_n_mock_providers(n: usize) -> Vec<TestMockProvider> {
+        (0..n).map(|_| TestMockProvider::new(Duration::from_secs(0))).collect()
+    }
 
-        for value in [100, 101, 68, 100, 102] {
-            let mock = MockProvider::new();
-            for _ in 0..6 {
-                mock.push(U64::from(value)).unwrap();
-            }
-            providers.push(WeightedProvider::new(mock.clone()));
+    #[derive(Clone, Debug)]
+    struct TestMockProvider {
+        pub delay: Duration,
+        pub responses: Arc<Mutex<VecDeque<Result<Value, ProviderError>>>>,
+    }
+
+    impl TestMockProvider {
+        pub fn new(delay: Duration) -> Self {
+            Self { delay, responses: Arc::new(Mutex::new(VecDeque::new())) }
         }
 
-        let quorum = QuorumProvider::builder()
-            .add_providers(providers.clone())
-            .quorum(Quorum::ProviderCount(5))
-            .build();
-        assert_eq!(
-            quorum.get_quorum_number::<U64>("foo", WrappedParams::Zst).await.unwrap().as_u64(),
-            68
-        );
+        pub async fn push(&self, value: Result<Value, ProviderError>) {
+            self.responses.lock().await.push_back(value);
+        }
+    }
 
-        let quorum = QuorumProvider::builder()
-            .add_providers(providers.clone())
-            .quorum(Quorum::ProviderCount(4))
-            .build();
-        assert_eq!(
-            quorum.get_quorum_number::<U64>("foo", WrappedParams::Zst).await.unwrap().as_u64(),
-            100
-        );
+    #[async_trait::async_trait]
+    impl JsonRpcClientWrapper for TestMockProvider {
+        async fn request(
+            &self,
+            _method: &str,
+            _params: WrappedParams,
+        ) -> Result<Value, ProviderError> {
+            tokio::time::sleep(self.delay).await;
+            self.responses.lock().await.pop_back().ok_or(MockError::EmptyResponses)?
+        }
+    }
 
-        let quorum = QuorumProvider::builder()
-            .add_providers(providers.clone())
-            .quorum(Quorum::ProviderCount(3))
-            .build();
-        assert_eq!(
-            quorum.get_quorum_number::<U64>("foo", WrappedParams::Zst).await.unwrap().as_u64(),
-            100
-        );
+    #[tokio::test]
+    async fn test_get_quorum_block_number() {
+        {
+            let mocks = build_n_mock_providers(5);
+            let responses = [100, 101, 100, 102, 68];
+            for (i, value) in responses.iter().enumerate() {
+                mocks[i].push(Ok(serde_json::to_value(U64::from(*value)).unwrap())).await;
+            }
 
-        let quorum = QuorumProvider::builder()
-            .add_providers(providers.clone())
-            .quorum(Quorum::ProviderCount(2))
-            .build();
-        assert_eq!(
-            quorum.get_quorum_number::<U64>("foo", WrappedParams::Zst).await.unwrap().as_u64(),
-            101
-        );
+            let providers: Vec<_> =
+                mocks.into_iter().map(|mock| WeightedProvider::new(mock)).collect();
+            let quorum = QuorumProvider::builder()
+                .add_providers(providers)
+                .quorum(Quorum::ProviderCount(5))
+                .build();
+            assert_eq!(
+                quorum.get_quorum_number::<U64>("foo", WrappedParams::Zst).await.unwrap().as_u64(),
+                68
+            );
+        }
+        {
+            // even though we build 5 providers, we only fill 4 of them with responses
+            // to simulate some of them failing to respond
+            let mocks = build_n_mock_providers(5);
+            let responses = [100, 101, 100, 102];
+            for (i, value) in responses.iter().enumerate() {
+                mocks[i].push(Ok(serde_json::to_value(U64::from(*value)).unwrap())).await;
+            }
 
-        let quorum = QuorumProvider::builder()
-            .add_providers(providers.clone())
-            .quorum(Quorum::ProviderCount(1))
-            .build();
-        assert_eq!(
-            quorum.get_quorum_number::<U64>("foo", WrappedParams::Zst).await.unwrap().as_u64(),
-            102
-        );
+            let providers: Vec<_> =
+                mocks.into_iter().map(|mock| WeightedProvider::new(mock)).collect();
 
-        let quorum = QuorumProvider::builder()
-            .add_providers(providers.clone())
-            .quorum(Quorum::Majority)
-            .build();
+            let quorum = QuorumProvider::builder()
+                .add_providers(providers)
+                .quorum(Quorum::ProviderCount(4))
+                .build();
+            assert_eq!(
+                quorum.get_quorum_number::<U64>("foo", WrappedParams::Zst).await.unwrap().as_u64(),
+                100
+            );
+        }
+        {
+            let mocks = build_n_mock_providers(5);
+            let responses = [100, 101, 102];
+            for (i, value) in responses.iter().enumerate() {
+                mocks[i].push(Ok(serde_json::to_value(U64::from(*value)).unwrap())).await;
+            }
+
+            let providers: Vec<_> =
+                mocks.into_iter().map(|mock| WeightedProvider::new(mock)).collect();
+
+            let quorum = QuorumProvider::builder()
+                .add_providers(providers)
+                .quorum(Quorum::ProviderCount(3))
+                .build();
+            assert_eq!(
+                quorum.get_quorum_number::<U64>("foo", WrappedParams::Zst).await.unwrap().as_u64(),
+                100
+            );
+        }
+        {
+            let mocks = build_n_mock_providers(5);
+            let responses = [101, 102];
+            for (i, value) in responses.iter().enumerate() {
+                mocks[i].push(Ok(serde_json::to_value(U64::from(*value)).unwrap())).await;
+            }
+
+            let providers: Vec<_> =
+                mocks.into_iter().map(|mock| WeightedProvider::new(mock)).collect();
+            let quorum = QuorumProvider::builder()
+                .add_providers(providers)
+                .quorum(Quorum::ProviderCount(2))
+                .build();
+            assert_eq!(
+                quorum.get_quorum_number::<U64>("foo", WrappedParams::Zst).await.unwrap().as_u64(),
+                101
+            );
+        }
+        {
+            let mocks = build_n_mock_providers(5);
+            let responses = [102];
+            for (i, value) in responses.iter().enumerate() {
+                mocks[i].push(Ok(serde_json::to_value(U64::from(*value)).unwrap())).await;
+            }
+
+            let providers: Vec<_> =
+                mocks.into_iter().map(|mock| WeightedProvider::new(mock)).collect();
+            let quorum = QuorumProvider::builder()
+                .add_providers(providers)
+                .quorum(Quorum::ProviderCount(1))
+                .build();
+            assert_eq!(
+                quorum.get_quorum_number::<U64>("foo", WrappedParams::Zst).await.unwrap().as_u64(),
+                102
+            );
+        }
+        {
+            let mocks = build_n_mock_providers(5);
+
+            let responses = [100, 100, 100, 68, 68];
+            for (i, value) in responses.iter().enumerate() {
+                mocks[i].push(Ok(serde_json::to_value(U64::from(*value)).unwrap())).await;
+            }
+            let providers: Vec<_> =
+                mocks.into_iter().map(|mock| WeightedProvider::new(mock)).collect();
+
+            let quorum =
+                QuorumProvider::builder().add_providers(providers).quorum(Quorum::Majority).build();
+            assert_eq!(
+                quorum.get_quorum_number::<U64>("foo", WrappedParams::Zst).await.unwrap().as_u64(),
+                100
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_quorum_number_with_slow_responses_within_threshold() {
+        let mut providers = Vec::new();
+        let test_data = [(500, 200), (500, 100), (500, 100), (800, 200), (800, 200)];
+        for (millis, value) in test_data {
+            let mock = TestMockProvider::new(Duration::from_millis(millis));
+            mock.push(Ok(serde_json::to_value(U64::from(value)).unwrap())).await;
+            providers.push(WeightedProvider::new(mock));
+        }
+
+        let quorum =
+            QuorumProvider::builder().add_providers(providers).quorum(Quorum::Majority).build();
         assert_eq!(
             quorum.get_quorum_number::<U64>("foo", WrappedParams::Zst).await.unwrap().as_u64(),
-            100
+            200
         );
+    }
+
+    #[tokio::test]
+    async fn test_get_quorum_number_with_slow_responses_exceeds_threshold() {
+        let mut providers = Vec::new();
+        let test_data = [(500, 50), (500, 50), (500, 50), (2000, 100), (2000, 100)];
+        for (millis, value) in test_data {
+            let mock = TestMockProvider::new(Duration::from_millis(millis));
+            mock.push(Ok(serde_json::to_value(U64::from(value)).unwrap())).await;
+            providers.push(WeightedProvider::new(mock));
+        }
+
+        let start = SystemTime::now();
+        let quorum =
+            QuorumProvider::builder().add_providers(providers).quorum(Quorum::Majority).build();
+
+        let quorum_number =
+            quorum.get_quorum_number::<U64>("foo", WrappedParams::Zst).await.unwrap().as_u64();
+        let elapsed = start.elapsed().unwrap();
+
+        // check to make sure we didn't wait a long time
+        assert!(elapsed <= Duration::from_millis(1200));
+
+        assert_eq!(quorum_number, 50);
     }
 
     #[tokio::test]
