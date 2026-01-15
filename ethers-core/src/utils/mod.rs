@@ -35,11 +35,8 @@ use crate::types::{Address, Bytes, ParseI256Error, I256, U256};
 use elliptic_curve::sec1::ToEncodedPoint;
 use ethabi::ethereum_types::FromDecStrErr;
 use k256::{ecdsa::SigningKey, PublicKey as K256PublicKey};
-use std::{
-    convert::TryInto,
-    fmt,
-};
 use std::convert::TryFrom;
+use std::{convert::TryInto, fmt};
 use thiserror::Error;
 
 /// I256 overflows for numbers wider than 77 units.
@@ -417,7 +414,7 @@ pub fn to_checksum(addr: &Address, chain_id: Option<u8>) -> String {
 pub fn format_bytes32_string(text: &str) -> Result<[u8; 32], ConversionError> {
     let str_bytes: &[u8] = text.as_bytes();
     if str_bytes.len() > 32 {
-        return Err(ConversionError::TextTooLong)
+        return Err(ConversionError::TextTooLong);
     }
 
     let mut bytes32: [u8; 32] = [0u8; 32];
@@ -456,13 +453,29 @@ pub fn eip1559_default_estimator(base_fee_per_gas: U256, rewards: Vec<Vec<U256>>
 }
 
 fn estimate_priority_fee(rewards: Vec<Vec<U256>>) -> U256 {
+    // In case multiple percentiles were requested, we consider the first percentile with a non-zero value
+    let m_len = rewards.first().map(|r| r.len()).unwrap_or(0);
+    let mut selected_col = 0;
+
+    // Find the lowest percentile column with a non-zero value.
+    for m in 0..m_len {
+        let col_vals = rewards.iter().filter_map(|r| r.get(m)).collect::<Vec<_>>();
+        if col_vals.is_empty() {
+            continue;
+        }
+        if col_vals.iter().any(|x| !x.is_zero()) {
+            selected_col = m;
+            break;
+        }
+    }
+
     let mut rewards: Vec<U256> =
-        rewards.iter().map(|r| r.iter().next().unwrap_or(&U256::zero()).clone()).filter(|r| *r > U256::zero()).collect();
+        rewards.iter().map(|r| r.iter().skip(selected_col).next().unwrap_or(&U256::zero()).clone()).filter(|r| *r > U256::zero()).collect();
     if rewards.is_empty() {
-        return U256::zero()
+        return U256::zero();
     }
     if rewards.len() == 1 {
-        return rewards[0]
+        return rewards[0];
     }
 
     // Sort the rewards as we will eventually take the median.
@@ -490,8 +503,8 @@ fn estimate_priority_fee(rewards: Vec<Vec<U256>>) -> U256 {
 
     // If we encountered a big change in fees at a certain position, then consider only
     // the values >= it.
-    let values = if *max_change >= EIP1559_FEE_ESTIMATION_THRESHOLD_MAX_CHANGE.into() &&
-        (max_change_index >= (rewards.len() / 2))
+    let values = if *max_change >= EIP1559_FEE_ESTIMATION_THRESHOLD_MAX_CHANGE.into()
+        && (max_change_index >= (rewards.len() / 2))
     {
         rewards[max_change_index..].to_vec()
     } else {
@@ -500,8 +513,7 @@ fn estimate_priority_fee(rewards: Vec<Vec<U256>>) -> U256 {
 
     // Return the median.
     let n = values.len();
-    let median =
-        if n % 2 == 0 { (values[n / 2 - 1] + values[n / 2]) / 2 } else { values[n / 2] };
+    let median = if n % 2 == 0 { (values[n / 2 - 1] + values[n / 2]) / 2 } else { values[n / 2] };
 
     median
 }
@@ -968,8 +980,8 @@ mod tests {
         let (base_fee, priority_fee) = eip1559_default_estimator(U256::zero(), rewards);
         assert_eq!(
             base_fee,
-            U256::from(EIP1559_FEE_ESTIMATION_DEFAULT_PRIORITY_FEE) +
-                U256::from(EIP1559_FEE_ESTIMATION_DEFAULT_BASE_FEE)
+            U256::from(EIP1559_FEE_ESTIMATION_DEFAULT_PRIORITY_FEE)
+                + U256::from(EIP1559_FEE_ESTIMATION_DEFAULT_BASE_FEE)
         );
         assert_eq!(priority_fee, U256::from(EIP1559_FEE_ESTIMATION_DEFAULT_PRIORITY_FEE));
 
@@ -994,9 +1006,82 @@ mod tests {
         // zero.
         let overflow = U256::from(u32::MAX) + 1;
         let rewards_overflow: Vec<Vec<U256>> = vec![vec![overflow], vec![overflow]];
-        assert_eq!(
-            estimate_priority_fee(rewards_overflow),
-            overflow
-        );
+        assert_eq!(estimate_priority_fee(rewards_overflow), overflow);
+    }
+
+    #[test]
+    fn estimate_priority_fee_single_percentile() {
+        // Single percentile per block (each inner vec has len=1)
+        // Should sort and take median, ignoring zeros, and return 0 if all zero
+        let rewards: Vec<Vec<U256>> =
+            vec![vec![10u64.into()], vec![0u64.into()], vec![30u64.into()]];
+        // After filtering zeros: [10, 30] -> median = (10 + 30)/2 = 20
+        assert_eq!(estimate_priority_fee(rewards), U256::from(20u64));
+
+        // Only one non-zero value -> should return that value
+        let rewards_one: Vec<Vec<U256>> =
+            vec![vec![0u64.into()], vec![50u64.into()], vec![0u64.into()]];
+        assert_eq!(estimate_priority_fee(rewards_one), U256::from(50u64));
+
+        // All zeros -> should return zero
+        let rewards_zero: Vec<Vec<U256>> = vec![vec![0u64.into()], vec![0u64.into()]];
+        assert_eq!(estimate_priority_fee(rewards_zero), U256::zero());
+
+        // Empty input -> should return zero
+        let rewards_empty: Vec<Vec<U256>> = vec![];
+        assert_eq!(estimate_priority_fee(rewards_empty), U256::zero());
+    }
+
+    #[test]
+    fn estimate_priority_fee_multiple_percentiles() {
+        // Multiple percentiles per block (inner vec len=3).
+        // The function should pick the first percentile column with any non-zero value across blocks.
+        // Column 0 has all zeros, column 1 has some zeros but also non-zero, column 2 has non-zero too.
+        let rewards: Vec<Vec<U256>> = vec![
+            vec![0u64.into(), 100u64.into(), 90u64.into()],
+            vec![0u64.into(), 0u64.into(), 110u64.into()],
+            vec![0u64.into(), 105u64.into(), 120u64.into()],
+            vec![0u64.into(), 102u64.into(), 130u64.into()],
+        ];
+        // selected_col = 1 (first column with any non-zero across rows)
+        // values in col 1: [100, 105, 102] after filtering zeros and sorting -> [100, 102, 105]
+        // No large jump beyond threshold; median of odd count -> 102
+        assert_eq!(estimate_priority_fee(rewards.clone()), U256::from(102u64));
+
+        // Verify behavior when the largest percentage change is in the upper half and exceeds threshold,
+        // then values are sliced from that index before computing median.
+        // Construct a sharp jump: [10, 11, 5000, 5001] in selected column
+        let rewards_sharp: Vec<Vec<U256>> = vec![
+            vec![0u64.into(), 10u64.into(), 1u64.into()],
+            vec![0u64.into(), 11u64.into(), 1u64.into()],
+            vec![0u64.into(), 5000u64.into(), 1u64.into()],
+            vec![0u64.into(), 5001u64.into(), 1u64.into()],
+        ];
+        // selected_col = 1, values -> [10, 11, 5000, 5001]
+        // percentage changes ~ [ (11-10)/10=10%, (5000-11)/11≈~45445%, (5001-5000)/5000=0.02% ]
+        // max change at index 1 (>= len/2? len=4, len/2=2, index 1 < 2 => do not slice)
+        // So median of even count -> (11 + 5000)/2 = 2505
+        assert_eq!(estimate_priority_fee(rewards_sharp.clone()), U256::from(2505u64));
+
+        // Make max change index fall in upper half by tweaking ordering after sort
+        // values: [10, 11, 12, 5000]
+        let rewards_upper_half: Vec<Vec<U256>> = vec![
+            vec![0u64.into(), 10u64.into(), 0u64.into()],
+            vec![0u64.into(), 11u64.into(), 0u64.into()],
+            vec![0u64.into(), 12u64.into(), 0u64.into()],
+            vec![0u64.into(), 5000u64.into(), 0u64.into()],
+        ];
+        // percentage changes: [10%, ~9.09%, ~(5000-12)/12≈41566%], max index = 2 (>= len/2=2) and exceeds threshold
+        // Slice from index 2 -> [12, 5000], median even -> (12 + 5000)/2 = 2506
+        assert_eq!(estimate_priority_fee(rewards_upper_half), U256::from(2506u64));
+
+        // If the first column already has non-zero values, it should be selected
+        let rewards_first_col: Vec<Vec<U256>> = vec![
+            vec![1u64.into(), 999u64.into(), 1000u64.into()],
+            vec![2u64.into(), 999u64.into(), 1000u64.into()],
+            vec![3u64.into(), 999u64.into(), 1000u64.into()],
+        ];
+        // selected_col = 0; values -> [1,2,3]; median -> 2
+        assert_eq!(estimate_priority_fee(rewards_first_col), U256::from(2u64));
     }
 }
