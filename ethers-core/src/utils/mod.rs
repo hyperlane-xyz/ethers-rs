@@ -457,7 +457,7 @@ pub fn eip1559_default_estimator(base_fee_per_gas: U256, rewards: Vec<Vec<U256>>
 
 fn estimate_priority_fee(rewards: Vec<Vec<U256>>) -> U256 {
     let mut rewards: Vec<U256> =
-        rewards.iter().map(|r| r[0]).filter(|r| *r > U256::zero()).collect();
+        rewards.iter().map(|r| r.iter().next().unwrap_or(&U256::zero()).clone()).filter(|r| *r > U256::zero()).collect();
     if rewards.is_empty() {
         return U256::zero()
     }
