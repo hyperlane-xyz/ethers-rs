@@ -470,7 +470,7 @@ fn estimate_priority_fee(rewards: Vec<Vec<U256>>) -> U256 {
     }
 
     let mut rewards: Vec<U256> =
-        rewards.iter().map(|r| r[selected_col]).filter(|r| *r > U256::zero()).collect();
+        rewards.iter().map(|r| r.iter().skip(selected_col).next().unwrap_or(&U256::zero()).clone()).filter(|r| *r > U256::zero()).collect();
     if rewards.is_empty() {
         return U256::zero();
     }
