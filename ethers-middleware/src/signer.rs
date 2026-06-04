@@ -233,6 +233,12 @@ where
         Ok(self.signer.sign_transaction(tx).await.map_err(SignerMiddlewareError::SignerError)?)
     }
 
+    /// Signs `tx` with the wrapped signer and returns the raw RLP-encoded
+    /// signed transaction (reuses the inherent [`SignerMiddleware::sign_transaction`]).
+    async fn sign_raw_transaction(&self, tx: &TypedTransaction) -> Result<Bytes, Self::Error> {
+        SignerMiddleware::sign_transaction(self, tx.clone()).await
+    }
+
     /// Helper for filling a transaction's nonce using the wallet
     #[instrument(skip(self), name = "SignerMiddleware::fill_transaction")]
     async fn fill_transaction(
