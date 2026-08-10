@@ -59,12 +59,29 @@ pub enum Frequency {
     Duration(u64),
 }
 
+/// Controls whether a transaction whose initial broadcast returned an error is monitored for
+/// future fee escalation. Monitoring preserves the historical behavior for providers whose send
+/// errors may be ambiguous. Dropping avoids an independent retry stream when the caller knows a
+/// failed send was not accepted and owns retry scheduling itself.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum InitialSendFailurePolicy {
+    /// Retain and retry the transaction even though no transaction hash was returned.
+    #[default]
+    Monitor,
+    /// Do not retain a transaction unless its initial broadcast returned a transaction hash.
+    ///
+    /// Callers must also ensure an outer nonce manager does not advance past the dropped
+    /// transaction. Otherwise a later retry can leave a permanent nonce gap.
+    Drop,
+}
+
 #[derive(Debug)]
 pub(crate) struct GasEscalatorMiddlewareInternal<M> {
     pub(crate) inner: Arc<M>,
     /// The transactions which are currently being monitored for escalation
     #[allow(clippy::type_complexity)]
     pub txs: ToEscalate,
+    initial_send_failure_policy: InitialSendFailurePolicy,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -266,14 +283,21 @@ where
                 Ok(pending_tx)
             }
             Err(err) => {
-                tracing::warn!(tx = ?tx, "Failed to send tx, adding to gas escalator watcher regardless");
-                let mut lock = self.txs.lock().await;
-                lock.push(MonitoredTransaction {
-                    hash: None,
-                    inner: tx,
-                    creation_time: Instant::now(),
-                    block: None,
-                });
+                match self.initial_send_failure_policy {
+                    InitialSendFailurePolicy::Monitor => {
+                        tracing::warn!(tx = ?tx, "Failed to send tx, adding to gas escalator watcher regardless");
+                        let mut lock = self.txs.lock().await;
+                        lock.push(MonitoredTransaction {
+                            hash: None,
+                            inner: tx,
+                            creation_time: Instant::now(),
+                            block: None,
+                        });
+                    }
+                    InitialSendFailurePolicy::Drop => {
+                        tracing::warn!(tx = ?tx, "Failed to send tx, not adding to gas escalator watcher");
+                    }
+                }
                 Err(GasEscalatorError::MiddlewareError(err))
             }
         }
@@ -294,18 +318,145 @@ where
         E: GasEscalator + Clone + 'static,
         M: 'static,
     {
+        Self::new_with_initial_send_failure_policy(
+            inner,
+            escalator,
+            frequency,
+            InitialSendFailurePolicy::default(),
+        )
+    }
+
+    /// Initializes the middleware and selects how an initial broadcast error is handled.
+    ///
+    /// See [`InitialSendFailurePolicy::Drop`] for its nonce-management requirement.
+    #[allow(clippy::let_and_return)]
+    #[cfg(not(target_arch = "wasm32"))]
+    #[instrument(skip(inner, escalator, frequency))]
+    pub fn new_with_initial_send_failure_policy<E>(
+        inner: M,
+        escalator: E,
+        frequency: Frequency,
+        initial_send_failure_policy: InitialSendFailurePolicy,
+    ) -> Self
+    where
+        E: GasEscalator + Clone + 'static,
+        M: 'static,
+    {
         let inner = Arc::new(inner);
 
         let txs: ToEscalate = Default::default();
 
-        let this =
-            Arc::new(GasEscalatorMiddlewareInternal { inner: inner.clone(), txs: txs.clone() });
+        let this = Arc::new(GasEscalatorMiddlewareInternal {
+            inner: inner.clone(),
+            txs: txs.clone(),
+            initial_send_failure_policy,
+        });
 
         let esc = EscalationTask { inner, escalator, frequency, txs };
 
         spawn(esc.monitor().instrument(tracing::debug_span!("gas_escalation")));
 
         Self { inner: this }
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+    use ethers_core::types::{Address, TransactionReceipt, TransactionRequest};
+    use ethers_providers::{MockProvider, Provider};
+
+    #[derive(Clone, Debug)]
+    struct AlwaysBump;
+
+    impl GasEscalator for AlwaysBump {
+        fn get_gas_price(&self, initial_price: U256, _time_elapsed: u64) -> U256 {
+            initial_price.saturating_add(U256::one())
+        }
+    }
+
+    fn middleware(
+        policy: InitialSendFailurePolicy,
+    ) -> GasEscalatorMiddlewareInternal<Provider<MockProvider>> {
+        GasEscalatorMiddlewareInternal {
+            inner: Arc::new(Provider::new(MockProvider::new())),
+            txs: Default::default(),
+            initial_send_failure_policy: policy,
+        }
+    }
+
+    fn transaction() -> TransactionRequest {
+        TransactionRequest::new()
+            .from(Address::from_low_u64_be(1))
+            .to(Address::from_low_u64_be(2))
+            .gas(21_000_u64)
+            .gas_price(1_u64)
+            .nonce(0_u64)
+            .chain_id(1_u64)
+    }
+
+    #[tokio::test]
+    async fn failed_initial_send_is_not_monitored_when_configured_to_drop() {
+        let middleware = middleware(InitialSendFailurePolicy::Drop);
+
+        let result = middleware.send_transaction(transaction(), None).await;
+
+        assert!(result.is_err());
+        assert!(middleware.txs.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn default_policy_keeps_monitoring_failed_initial_sends() {
+        let middleware = middleware(InitialSendFailurePolicy::default());
+
+        let result = middleware.send_transaction(transaction(), None).await;
+
+        assert!(result.is_err());
+        let monitored = middleware.txs.lock().await;
+        assert_eq!(monitored.len(), 1);
+        assert_eq!(monitored[0].hash, None);
+    }
+
+    #[tokio::test]
+    async fn successful_initial_send_is_still_fee_escalated_under_drop_policy() {
+        let mock = MockProvider::new();
+        let provider = Provider::new(mock.clone());
+        let tx_hash = TxHash::from_low_u64_be(7);
+        mock.push(tx_hash).unwrap();
+        let middleware = GasEscalatorMiddlewareInternal {
+            inner: Arc::new(provider.clone()),
+            txs: Default::default(),
+            initial_send_failure_policy: InitialSendFailurePolicy::Drop,
+        };
+
+        let pending = middleware
+            .send_transaction(transaction(), None)
+            .await
+            .expect("mock broadcast succeeds");
+
+        assert_eq!(*pending, tx_hash);
+        assert_eq!(middleware.txs.lock().await[0].hash, Some(tx_hash));
+
+        let escalated_hash = TxHash::from_low_u64_be(8);
+        // Mock responses are popped from the back in request order: block, receipt, gas price,
+        // replacement broadcast.
+        mock.push(escalated_hash).unwrap();
+        mock.push(U256::one()).unwrap();
+        mock.push(Option::<TransactionReceipt>::None).unwrap();
+        mock.push(Some(Block::<TxHash>::default())).unwrap();
+
+        let task = EscalationTask::new(
+            Arc::new(provider),
+            AlwaysBump,
+            Frequency::Duration(1),
+            middleware.txs.clone(),
+        );
+        task.escalate_stuck_txs().await.expect("fee escalation succeeds");
+
+        let monitored = middleware.txs.lock().await;
+        assert_eq!(monitored.len(), 1);
+        assert_eq!(monitored[0].hash, Some(escalated_hash));
+        assert_eq!(monitored[0].inner.gas_price(), Some(U256::from(2_u64)));
     }
 }
 
