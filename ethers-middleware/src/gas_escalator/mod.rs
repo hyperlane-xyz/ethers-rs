@@ -375,6 +375,19 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Debug)]
+    struct BumpAfterOneSecond;
+
+    impl GasEscalator for BumpAfterOneSecond {
+        fn get_gas_price(&self, initial_price: U256, time_elapsed: u64) -> U256 {
+            if time_elapsed >= 1 {
+                initial_price.saturating_add(U256::one())
+            } else {
+                initial_price
+            }
+        }
+    }
+
     fn middleware(
         policy: InitialSendFailurePolicy,
     ) -> GasEscalatorMiddlewareInternal<Provider<MockProvider>> {
@@ -458,6 +471,72 @@ mod tests {
         assert_eq!(monitored[0].hash, Some(escalated_hash));
         assert_eq!(monitored[0].inner.gas_price(), Some(U256::from(2_u64)));
     }
+
+    #[tokio::test]
+    async fn receipt_provider_error_retains_every_watched_transaction() {
+        let provider = Provider::new(MockProvider::new());
+        let first = MonitoredTransaction {
+            hash: Some(TxHash::from_low_u64_be(11)),
+            inner: transaction().into(),
+            creation_time: Instant::now(),
+            block: None,
+        };
+        let second = MonitoredTransaction {
+            hash: Some(TxHash::from_low_u64_be(12)),
+            inner: transaction().nonce(1_u64).into(),
+            creation_time: Instant::now(),
+            block: None,
+        };
+        let txs = Arc::new(Mutex::new(vec![first.clone(), second.clone()]));
+        let task = EscalationTask::new(provider, AlwaysBump, Frequency::Duration(1), txs.clone());
+
+        task.escalate_stuck_txs().await.expect("receipt errors do not stop watcher pass");
+
+        assert_eq!(*txs.lock().await, vec![first, second]);
+    }
+
+    #[tokio::test]
+    async fn unknown_replacement_send_error_retains_watched_transaction() {
+        let mock = MockProvider::new();
+        let provider = Provider::new(mock.clone());
+        let monitored = MonitoredTransaction {
+            hash: Some(TxHash::from_low_u64_be(13)),
+            inner: transaction().into(),
+            creation_time: Instant::now() - std::time::Duration::from_secs(1),
+            block: None,
+        };
+        let txs = Arc::new(Mutex::new(vec![monitored.clone()]));
+
+        // Mock responses pop from the back: latest block, receipt, gas price. Leave no response
+        // for the replacement broadcast so it returns an unknown provider error.
+        mock.push(U256::one()).unwrap();
+        mock.push(Option::<TransactionReceipt>::None).unwrap();
+        mock.push(Some(Block::<TxHash>::default())).unwrap();
+
+        let task =
+            EscalationTask::new(provider, BumpAfterOneSecond, Frequency::Duration(1), txs.clone());
+        task.escalate_stuck_txs().await.expect("replacement send errors do not stop watcher pass");
+
+        let reset_creation_time = {
+            let retained = txs.lock().await;
+            assert_eq!(retained.len(), 1);
+            assert_eq!(retained[0].hash, monitored.hash);
+            assert_eq!(retained[0].inner.gas_price(), Some(U256::from(2_u64)));
+            assert!(retained[0].creation_time > monitored.creation_time);
+            retained[0].creation_time
+        };
+
+        // A watcher tick immediately after the ambiguous error must not send another replacement.
+        mock.push(U256::one()).unwrap();
+        mock.push(Option::<TransactionReceipt>::None).unwrap();
+        mock.push(Some(Block::<TxHash>::default())).unwrap();
+        task.escalate_stuck_txs().await.expect("cooldown watcher pass succeeds");
+
+        let retained = txs.lock().await;
+        assert_eq!(retained.len(), 1);
+        assert_eq!(retained[0].inner.gas_price(), Some(U256::from(2_u64)));
+        assert_eq!(retained[0].creation_time, reset_creation_time);
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -485,7 +564,8 @@ impl<M, E: Clone> EscalationTask<M, E> {
 
     /// Handles errors from broadcasting a gas-escalated transaction
     ///
-    /// **Returns** `None`, if the transaction is to be dropped from the escalator, `Some` to keep monitoring and escalating it
+    /// **Returns** `None` only when a nonce-too-low error indicates inclusion, and `Some` to keep
+    /// monitoring after every other broadcast error.
     fn handle_broadcast_error(
         err_message: String,
         old_monitored_tx: MonitoredTransaction,
@@ -512,16 +592,20 @@ impl<M, E: Clone> EscalationTask<M, E> {
                 err = err_message,
                 old_tx = ?old_monitored_tx.hash,
                 new_tx = ?new_tx,
-                "Unexpected error when broadcasting gas-escalated transaction. Dropping it from escalator."
+                "Unexpected error when broadcasting gas-escalated transaction. Retaining it in escalator."
             );
-            None
+            // An unknown send error is not proof that the old transaction was included or that
+            // the replacement was rejected. Keep the known transaction so a transient provider
+            // failure cannot silently stop escalation. Reset its retry age so an ambiguous error
+            // cannot trigger another replacement on every watcher tick.
+            Some((old_monitored_tx.hash, Instant::now()))
         }
     }
 
     /// Broadcasts the new transaction with the escalated gas price
     ///
-    /// **Returns** a tx hash to monitor and the time it was created, unless the tx was already
-    /// included or an unknown error occurred
+    /// **Returns** a tx hash to monitor and the time it was created, unless a nonce-too-low error
+    /// indicates that the transaction was already included.
     async fn broadcast_tx(
         &self,
         old_monitored_tx: MonitoredTransaction,
@@ -569,10 +653,18 @@ impl<M, E: Clone> EscalationTask<M, E> {
         for old_monitored_tx in monitored_txs {
             let receipt = if let Some(tx_hash) = old_monitored_tx.hash {
                 tracing::trace!(tx_hash = ?old_monitored_tx.hash, "checking if exists");
-                self.inner
-                    .get_transaction_receipt(tx_hash)
-                    .await
-                    .map_err(GasEscalatorError::MiddlewareError)?
+                match self.inner.get_transaction_receipt(tx_hash).await {
+                    Ok(receipt) => receipt,
+                    Err(error) => {
+                        tracing::error!(
+                            ?tx_hash,
+                            ?error,
+                            "Failed to check escalated transaction receipt; retaining it in watcher"
+                        );
+                        new_txs_to_monitor.push(old_monitored_tx);
+                        continue;
+                    }
+                }
             } else {
                 None
             };
