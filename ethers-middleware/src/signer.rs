@@ -234,9 +234,22 @@ where
     }
 
     /// Signs `tx` with the wrapped signer and returns the raw RLP-encoded
-    /// signed transaction (reuses the inherent [`SignerMiddleware::sign_transaction`]).
+    /// signed transaction. Mirrors `send_transaction`: if `from` is unset it is
+    /// filled with the signer's address, and if `from` is set to a different
+    /// address signing is delegated to the inner middleware.
     async fn sign_raw_transaction(&self, tx: &TypedTransaction) -> Result<Bytes, Self::Error> {
-        SignerMiddleware::sign_transaction(self, tx.clone()).await
+        let tx = self.set_tx_from_if_none(tx);
+
+        // If the from address is set and is not our signer, delegate to inner
+        if tx.from() != Some(&self.address) {
+            return self
+                .inner
+                .sign_raw_transaction(&tx)
+                .await
+                .map_err(SignerMiddlewareError::MiddlewareError)
+        }
+
+        self.sign_transaction(tx).await
     }
 
     /// Helper for filling a transaction's nonce using the wallet
@@ -593,5 +606,65 @@ mod tests {
 
         assert!(tx.as_legacy_ref().is_none());
         assert_eq!(tx, TypedTransaction::Eip1559(tx.as_eip1559_ref().unwrap().clone()));
+    }
+
+    fn recover_raw(raw: &Bytes) -> Address {
+        let (tx, sig) = TypedTransaction::decode_signed(&utils::rlp::Rlp::new(raw)).unwrap();
+        sig.recover(tx.sighash()).unwrap()
+    }
+
+    type StackedSigners = SignerMiddleware<
+        SignerMiddleware<Provider<ethers_providers::Http>, LocalWallet>,
+        LocalWallet,
+    >;
+
+    fn stacked_signers() -> (StackedSigners, Address, Address) {
+        // no RPC calls are made when signing, so the endpoint is never contacted
+        let provider = Provider::try_from("http://localhost:8545").unwrap();
+        let inner_key = LocalWallet::new(&mut rand::thread_rng()).with_chain_id(1u64);
+        let outer_key = LocalWallet::new(&mut rand::thread_rng()).with_chain_id(1u64);
+        let (inner_addr, outer_addr) = (inner_key.address(), outer_key.address());
+        let client = SignerMiddleware::new(SignerMiddleware::new(provider, inner_key), outer_key);
+        (client, inner_addr, outer_addr)
+    }
+
+    fn raw_test_tx() -> TransactionRequest {
+        TransactionRequest::new()
+            .to("F0109fC8DF283027b6285cc889F5aA624EaC1F55".parse::<Address>().unwrap())
+            .value(1u64)
+            .gas(21_000u64)
+            .gas_price(1u64)
+            .nonce(0u64)
+    }
+
+    #[tokio::test]
+    async fn sign_raw_transaction_from_signer() {
+        let (client, _, outer) = stacked_signers();
+        let tx = raw_test_tx().from(outer).into();
+        let raw = client.sign_raw_transaction(&tx).await.unwrap();
+        assert_eq!(recover_raw(&raw), outer);
+    }
+
+    #[tokio::test]
+    async fn sign_raw_transaction_from_unset_uses_signer() {
+        let (client, _, outer) = stacked_signers();
+        let tx = raw_test_tx().into();
+        let raw = client.sign_raw_transaction(&tx).await.unwrap();
+        assert_eq!(recover_raw(&raw), outer);
+    }
+
+    #[tokio::test]
+    async fn sign_raw_transaction_delegates_other_from_to_inner() {
+        let (client, inner, _) = stacked_signers();
+        let tx = raw_test_tx().from(inner).into();
+        let raw = client.sign_raw_transaction(&tx).await.unwrap();
+        assert_eq!(recover_raw(&raw), inner);
+    }
+
+    #[tokio::test]
+    async fn sign_raw_transaction_errors_if_no_signer_for_from() {
+        let (client, _, _) = stacked_signers();
+        let tx = raw_test_tx().from(Address::random()).into();
+        assert!(client.sign_raw_transaction(&tx).await.is_err());
     }
 }

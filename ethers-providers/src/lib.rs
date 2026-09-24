@@ -418,8 +418,10 @@ pub trait Middleware: Sync + Send + Debug {
     /// Unlike [`sign_transaction`], this does not make an RPC call and returns
     /// the full signed transaction rather than just the signature. It is useful
     /// for chains whose `eth_estimateGas` accepts a signed transaction so the
-    /// node can recover `msg.sender` (e.g. Seismic). Errors if no signer is
-    /// present in the stack.
+    /// node can recover `msg.sender` (e.g. Seismic). A signer only signs if
+    /// `tx.from` is unset or equals its address, otherwise it delegates further
+    /// down the stack, so the recovered sender always matches `tx.from`. Errors
+    /// if no signer in the stack can sign for `tx.from`.
     ///
     /// [`sign_transaction`]: Middleware::sign_transaction
     async fn sign_raw_transaction(&self, tx: &TypedTransaction) -> Result<Bytes, Self::Error> {

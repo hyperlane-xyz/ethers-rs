@@ -320,10 +320,11 @@ impl<P: JsonRpcClient> Middleware for Provider<P> {
 
     /// The base provider has no signer, so it cannot produce a signed
     /// transaction. A `SignerMiddleware` higher in the stack overrides this.
-    async fn sign_raw_transaction(&self, _tx: &TypedTransaction) -> Result<Bytes, Self::Error> {
-        Err(ProviderError::CustomError(
-            "no signer in the middleware stack to sign the transaction".to_owned(),
-        ))
+    async fn sign_raw_transaction(&self, tx: &TypedTransaction) -> Result<Bytes, Self::Error> {
+        Err(ProviderError::CustomError(format!(
+            "no signer in the middleware stack to sign the transaction (from: {:?})",
+            tx.from()
+        )))
     }
 
     ////// Blockchain Status
