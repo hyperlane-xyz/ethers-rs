@@ -411,6 +411,23 @@ pub trait Middleware: Sync + Send + Debug {
         self.inner().sign_transaction(tx, from).await.map_err(FromErr::from)
     }
 
+    /// Signs `tx` locally and returns the raw, RLP-encoded signed transaction
+    /// bytes, delegating down the middleware stack to a signer if one is
+    /// present (e.g. a `SignerMiddleware`).
+    ///
+    /// Unlike [`sign_transaction`], this does not make an RPC call and returns
+    /// the full signed transaction rather than just the signature. It is useful
+    /// for chains whose `eth_estimateGas` accepts a signed transaction so the
+    /// node can recover `msg.sender` (e.g. Seismic). A signer only signs if
+    /// `tx.from` is unset or equals its address, otherwise it delegates further
+    /// down the stack, so the recovered sender always matches `tx.from`. Errors
+    /// if no signer in the stack can sign for `tx.from`.
+    ///
+    /// [`sign_transaction`]: Middleware::sign_transaction
+    async fn sign_raw_transaction(&self, tx: &TypedTransaction) -> Result<Bytes, Self::Error> {
+        self.inner().sign_raw_transaction(tx).await.map_err(FromErr::from)
+    }
+
     ////// Contract state
 
     async fn get_logs(&self, filter: &Filter) -> Result<Vec<Log>, Self::Error> {
