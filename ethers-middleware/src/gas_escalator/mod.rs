@@ -364,7 +364,7 @@ where
 mod tests {
     use super::*;
     use ethers_core::types::{Address, TransactionReceipt, TransactionRequest};
-    use ethers_providers::{MockProvider, Provider};
+    use ethers_providers::{MockError, MockProvider, Provider};
 
     #[derive(Clone, Debug)]
     struct AlwaysBump;
@@ -470,6 +470,32 @@ mod tests {
         assert_eq!(monitored.len(), 1);
         assert_eq!(monitored[0].hash, Some(escalated_hash));
         assert_eq!(monitored[0].inner.gas_price(), Some(U256::from(2_u64)));
+    }
+
+    #[tokio::test]
+    async fn idle_watcher_pass_makes_no_rpc_calls() {
+        let mock = MockProvider::new();
+        let provider = Provider::new(mock.clone());
+        let txs: ToEscalate = Default::default();
+        let task = EscalationTask::new(provider, AlwaysBump, Frequency::Duration(1), txs.clone());
+
+        task.escalate_stuck_txs().await.expect("idle watcher pass succeeds");
+        assert!(matches!(
+            mock.assert_request("eth_getBlockByNumber", ("latest", false)),
+            Err(MockError::EmptyRequests)
+        ));
+
+        // Once a tx is monitored, the next pass fetches the latest block again.
+        txs.lock().await.push(MonitoredTransaction {
+            hash: Some(TxHash::from_low_u64_be(21)),
+            inner: transaction().into(),
+            creation_time: Instant::now(),
+            block: None,
+        });
+        mock.push(Option::<TransactionReceipt>::None).unwrap();
+        mock.push(Some(Block::<TxHash>::default())).unwrap();
+        task.escalate_stuck_txs().await.expect("watcher pass succeeds");
+        mock.assert_request("eth_getBlockByNumber", ("latest", false)).unwrap();
     }
 
     #[tokio::test]
@@ -645,9 +671,12 @@ impl<M, E: Clone> EscalationTask<M, E> {
             // Lock scope ends
         };
 
-        if !monitored_txs.is_empty() {
-            tracing::trace!(?monitored_txs, "In the escalator watcher loop. Monitoring txs");
+        // Nothing to escalate, so skip all RPC calls for this tick. The latest block is only used
+        // for the base fee of the current pass, so nothing depends on a block fetched while idle.
+        if monitored_txs.is_empty() {
+            return Ok(());
         }
+        tracing::trace!(?monitored_txs, "In the escalator watcher loop. Monitoring txs");
         let mut new_txs_to_monitor = vec![];
         let maybe_latest_block = self.inner.get_block(BlockNumber::Latest).await.ok().flatten();
         for old_monitored_tx in monitored_txs {
